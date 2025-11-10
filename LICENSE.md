@@ -10,8 +10,6 @@
 | BSP Component mx66uw1g45g                     | STMicroelectronics                        | BSD-3-Clause                                  |
 | BSP Component rk050hr18                       | STMicroelectronics                        | BSD-3-Clause                                  |
 | BSP Component mx25um51245g                    | STMicroelectronics                        | BSD-3-Clause                                  |
-| Fonts Utility                                 | STMicroelectronics                        | BSD-3-Clause                                  |
-| lcd Utility                                   | STMicroelectronics                        | BSD-3-Clause                                  |
 | FreeRTOS kernel                               | Amazon.com, Inc. or its affiliates        | MIT                                           |
 | Azure RTOS USBX                               | Microsoft Corporation                     | Microsoft Software License for Azure RTOS     |
 | Gcc                                           | STMicroelectronics                        | SLA0044                                       |
@@ -20,5 +18,5 @@
 | Lib/uvcl                                      | STMicroelectronics                        | SLA0044                                       |
 | Lib/Camera_Middleware                         | STMicroelectronics                        | SLA0044                                       |
 | Lib/Camera_Middleware/sensors                 | STMicroelectronics                        | BSD-3-Clause                                  |
-| Lib/Camera_Middleware/ISP_Library             | LACROIX - Impulse, STMicroelectronics     | SLA0044                                       |
+| Lib/Camera_Middleware/ISP_Library             | STMicroelectronics                        | SLA0044                                       |
 | Binary                                        | STMicroelectronics                        | SLA0044                                       |
