@@ -746,7 +746,7 @@
                 </option>
                 <option>
                     <name>OOCOutputFile</name>
-                    <state>x-cube-n6-camera-capture-dk.bin</state>
+                    <state>DIAS.bin</state>
                 </option>
                 <option>
                     <name>OOCCommandLineProducer</name>
@@ -785,7 +785,7 @@
                 </option>
                 <option>
                     <name>IlinkOutputFile</name>
-                    <state>x-cube-n6-camera-capture-dk.out</state>
+                    <state>DIAS.out</state>
                 </option>
                 <option>
                     <name>IlinkDebugInfoEnable</name>
@@ -1081,7 +1081,7 @@
                 </option>
                 <option>
                     <name>IlinkTrustzoneImportLibraryOut</name>
-                    <state>x-cube-n6-camera-capture-dk_import_lib.o</state>
+                    <state>DIAS_import_lib.o</state>
                 </option>
                 <option>
                     <name>OILinkExtraOption</name>

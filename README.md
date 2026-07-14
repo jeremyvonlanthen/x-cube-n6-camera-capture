@@ -157,7 +157,7 @@ Double click on `STM32CubeIDE/STM32N6570-DK/.project` to open the project in STM
 
 #### IAR EWARM
 
-Double click on `EWARM/STM32N6570-DK/x-cube-n6-camera-capture-dk.eww` to open the project in IAR IDE. Build and run with the build and run buttons.
+Double click on `EWARM/STM32N6570-DK/DIAS.eww` to open the project in IAR IDE. Build and run with the build and run buttons.
 
 #### Makefile
 
@@ -199,7 +199,7 @@ Double click on `STM32CubeIDE/STM32N6570-DK/.project` to open project in STM32Cu
 
 #### IAR EWARM
 
-Double click on `EWARM/STM32N6570-DK/x-cube-n6-camera-capture-dk.eww` to open project in IAR IDE. Build with build button.
+Double click on `EWARM/STM32N6570-DK/DIAS.eww` to open project in IAR IDE. Build with build button.
 
 #### Makefile
 
