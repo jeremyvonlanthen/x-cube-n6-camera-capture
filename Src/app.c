@@ -12,7 +12,7 @@
  *     the Python GUI over UART (Config_t)
  *
  * app_run() runs the DIAS state machine, on top of the helpers
- * (check_SD / app_mode_config_run / app_mode_detect_run).
+ * (check_SD / app_mode_config_run).
  ******************************************************************************
  * @attention
  *
@@ -159,16 +159,12 @@ static volatile int frame_ready = 0;
 static volatile int warmup_frames = 0;
 static volatile int warmup_done = 0;
 static volatile int uart_busy = 0;        /* 1 = UART used for binary data, printf muted */
-static volatile bool config_mode = true;
-static volatile bool detect_mode = false;
-static volatile bool first_mode = true;
-static volatile bool button_interrupt = false;
+static volatile int camera_initialized = 0;
 
 /* H264 recording state */
 static volatile int h264_streaming = 0;   /* capture->encode pipeline active */
 static volatile int h264_frame_ready = 0;
 static volatile int force_intra = 0;
-static int rec_ready = 0;                 /* SD card mounted, recorder usable */
 /* Double-buffered capture: address of the buffer just completed by DCMIPP
  * (read from the P1STM0AR status register in the frame event callback,
  * same pattern as the ST VENC_SDCard example). */
@@ -255,29 +251,6 @@ static void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
   HAL_UART_Transmit(&huart1, (uint8_t *)&gain, sizeof(gain), HAL_MAX_DELAY);
 }
 
-/* Blocks until a valid Config_t (magic checked) is received over UART, or
- * until warmup_done is cleared (mode change).  Answers 'V' (valid) or
- * 'F' (fail) after each attempt.  Returns 0 when a valid config was stored
- * in config_py, -1 otherwise. */
-static int uart_receive_config(void)
-{
-  uint8_t buffer[sizeof(Config_t)];
-  uint8_t answer = 'F';
-
-  while (warmup_done == 1) {
-    HAL_UART_Receive(&huart1, buffer, sizeof(Config_t), 100);
-    memcpy(&config_py, buffer, sizeof(Config_t));
-    if (config_py.magic == CONFIG_MAGIC) {
-      answer = 'V';
-      HAL_UART_Transmit(&huart1, &answer, 1, 100);
-      return 0;
-    }
-    HAL_UART_Transmit(&huart1, &answer, 1, 100);
-  }
-
-  return -1;
-}
-
 /* ==========================================================================
  * Camera helpers
  * ========================================================================== */
@@ -290,8 +263,7 @@ static void camera_warmup(uint32_t output_format)
   CAM_conf_t cam_conf = { 0 };
   uint8_t two_pipes = (output_format == DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
-  if (!first_mode)
-    CAM_Deinit();
+  if(camera_initialized) CAM_Deinit();
 
   cam_conf.capture_width        = SENSOR_WIDTH;
   cam_conf.capture_height       = SENSOR_HEIGHT;
@@ -311,61 +283,8 @@ static void camera_warmup(uint32_t output_format)
     HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE2, DCMIPP_VIRTUAL_CHANNEL0);
     vTaskDelay(pdMS_TO_TICKS(50));
   }
-}
-
-/* One snapshot on both pipes (detect mode) into the AXISRAM buffers */
-static void capture_pipes(void)
-{
-  uint32_t start;
-
-  snapshot_in_progress = 1;
-  frame_ready = 0;
-  CAM_CapturePipe_Start(buffer_pipe1_capture, buffer_pipe2_capture, CMW_MODE_SNAPSHOT, 1);
-
-  start = HAL_GetTick();
-  while (!frame_ready) {
-    if (HAL_GetTick() - start > 30000)
-      break;
-    vTaskDelay(pdMS_TO_TICKS(1));
-  }
-  snapshot_in_progress = 0;
-}
-
-/* JPEG-encodes both detect-mode captures and sends them to the GUI */
-static void send_pipes(void)
-{
-  int jpeg_len;
-
-  uart_busy = 1;
-
-  SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_pipe1_capture, CACHE_ALIGN_SIZE(size_pipe1));
-  SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_pipe2_capture, CACHE_ALIGN_SIZE(size_pipe2));
-
-  /* Pipe 1 */
-  jpg_conf.width      = downsize_conf_pipe1.HSize;
-  jpg_conf.height     = downsize_conf_pipe1.VSize;
-  jpg_conf.fmt_src    = JPG_SRC_GREY;
-  jpg_conf.full_width = SENSOR_WIDTH;
-  JPG_Init(&jpg_conf);
-  jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_pipe1_capture,
-                        MAX_JPEG_FRAME_SIZE, size_pipe1);
-  SCB_CleanDCache_by_Addr((uint32_t *)hires_jpeg_buffer, CACHE_ALIGN_SIZE(jpeg_len));
-  JPG_Deinit();
-  send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
-
-  /* Pipe 2 */
-  jpg_conf.width      = downsize_conf_pipe2.HSize;
-  jpg_conf.height     = downsize_conf_pipe2.VSize;
-  jpg_conf.fmt_src    = JPG_SRC_GREY;
-  jpg_conf.full_width = SENSOR_WIDTH;
-  JPG_Init(&jpg_conf);
-  jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_pipe2_capture,
-                        MAX_JPEG_FRAME_SIZE, size_pipe2);
-  SCB_CleanDCache_by_Addr((uint32_t *)hires_jpeg_buffer, CACHE_ALIGN_SIZE(jpeg_len));
-  JPG_Deinit();
-  send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
-
-  uart_busy = 0;
+  warmup_done = 1;
+  camera_initialized = 1;
 }
 
 /* One full-resolution YUV422 snapshot (config mode), JPEG-encoded and sent
@@ -521,11 +440,6 @@ static void record_jpeg_sd(void)
 
   uart_busy = 0;
 
-  if (!rec_ready) {
-    printf("[REC] SD card not available, snapshot skipped\r\n");
-    return;
-  }
-
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
   snapshot_in_progress = 1;
   frame_ready = 0;
@@ -547,7 +461,7 @@ static void record_jpeg_sd(void)
   /* Hardware JPEG encode: YUV422 in config mode, greyscale in detect mode */
   jpg_conf.width      = SENSOR_WIDTH;
   jpg_conf.height     = SENSOR_HEIGHT;
-  jpg_conf.fmt_src    = config_mode ? JPG_SRC_YUV422 : JPG_SRC_GREY;
+  jpg_conf.fmt_src    = JPG_SRC_YUV422; //JPG_SRC_GREY;
   jpg_conf.full_width = SENSOR_WIDTH;
   JPG_Init(&jpg_conf);
   jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_full_frame,
@@ -580,13 +494,6 @@ static void record_h264_sd(void)
 
   uart_busy = 0;  /* re-enable printf (send_pipes sets uart_busy=1 permanently) */
   printf("[REC] record_h264_sd entry hw_init=%d\r\n", hw_initialized);
-
-  if (!rec_ready) {
-    printf("[REC] SD card not available, recording aborted\r\n");
-    BSP_LED_On(LED_RED);
-    warmup_done = 0;
-    return;
-  }
 
   BSP_LED_Off(LED_RED);
   BSP_LED_Off(LED_GREEN);
@@ -797,12 +704,7 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
 /* USER1 button: toggle config mode <-> detect mode */
 void BSP_PB_Callback(Button_TypeDef Button)
 {
-  if (Button == BUTTON_USER1 && !button_interrupt) {
-    config_mode = !config_mode;
-    detect_mode = !detect_mode;
-    first_mode = false;
-    warmup_done = 0;
-    button_interrupt = true;
+  if (Button == BUTTON_USER1){ //FIXME: code exemple, à garder pour l'instant
     BSP_LED_Off(LED_GREEN);
   }
 }
@@ -815,93 +717,13 @@ void BSP_PB_Callback(Button_TypeDef Button)
  * (SD card + FAT32 mount + FreeRTOS SD writer task). */
 uint8_t check_SD(void)
 {
-  /* NOTE: assign the MODULE flag rec_ready (used by record_jpeg_sd /
-   * record_h264_sd) — a local variable here would shadow it and the
-   * recordings would abort with "SD card not available". */
-  rec_ready = (REC_Init() == 0);
+	uint8_t rec_ready = (REC_Init() == 0);
   if (!rec_ready)
     printf("[REC] SD init failed, retrying...\r\n");
   else
   	printf("[REC] SD init successful\r\n");
 
-  return (uint8_t)rec_ready;
-}
-
-/* Config mode: camera warmup in YUV422 then serve the Python GUI over UART
- * ('S' = send a full-res JPEG snapshot, 'V' = proceed to config reception).
- * TAMP button: direct JPEG + MP4 recording to SD.
- * Returns when the mode is left (mode toggle or after a recording). */
-void app_mode_config_run(void)
-{
-  uint8_t cmd = 0;
-
-  BSP_LED_Off(LED_RED);
-  camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
-  warmup_done = 1;
-  button_interrupt = false;
-
-  BSP_LED_On(LED_GREEN);
-
-  while (warmup_done == 1) {
-    /* TAMP button right after warmup: record directly to the SD card
-     * (JPEG snapshot then MP4 video), without going through the GUI. */
-    if (BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET) {
-      record_jpeg_sd();
-      record_h264_sd();
-      return; /* warmup_done cleared by record_h264_sd */
-    }
-
-    HAL_UART_Receive(&huart1, &cmd, 1, 100);
-    if (cmd == 'S') {
-      cmd = 0;
-      capture_yuv();
-    }
-    if (cmd == 'V') {
-      cmd = 0;
-      break;
-    }
-  }
-
-  /* Wait for the pipes configuration from the GUI */
-  uart_receive_config();
-}
-
-/* Detect mode: camera warmup in greyscale, apply the GUI pipes config,
- * then serve capture requests ('S') over UART.
- * TAMP button: direct JPEG + MP4 recording to SD.
- * Returns when the mode is left (mode toggle or after a recording).
- * Does nothing if no valid configuration was received yet. */
-void app_mode_detect_run(void)
-{
-  uint8_t cmd = 0;
-
-  BSP_LED_On(LED_RED);
-  camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
-  warmup_done = 1;
-  button_interrupt = false;
-
-  BSP_LED_On(LED_GREEN);
-
-  if (config_py.downsize_ratio_pipe1 == 0)
-    return; /* no valid configuration received yet */
-
-  dcmipp_apply_detect_config();
-
-  while (warmup_done == 1) {
-    /* TAMP button: record JPEG snapshot + H264 video (MP4) to SD card */
-    if (BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET) {
-      record_jpeg_sd();
-      record_h264_sd();
-      return; /* warmup_done cleared by record_h264_sd */
-    }
-
-    HAL_UART_Receive(&huart1, &cmd, 1, 100);
-    if (cmd == 'S') {
-      cmd = 0;
-      capture_pipes();
-      send_pipes();
-    }
-  }
+  return rec_ready;
 }
 
 /* ==========================================================================
@@ -934,10 +756,6 @@ void app_run(void)
 
 		case CONFIG_MODE_WARMUP:
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
-			/* Required: the frame event callback only raises frame_ready
-			 * (used by the snapshots) when warmup_done is set — otherwise
-			 * it keeps counting warmup frames and capture_yuv() times out. */
-			warmup_done = 1;
 			BSP_LED_On(LED_GREEN);
 
 			state = SEND_YUV_FRAME;
@@ -977,7 +795,6 @@ void app_run(void)
 
 		case DETECT_MODE_WARMUP:
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
-			warmup_done = 1;  /* same reason as CONFIG_MODE_WARMUP */
 			BSP_LED_On(LED_GREEN);
 
 			state = PIPES_CONFIGURATION;
