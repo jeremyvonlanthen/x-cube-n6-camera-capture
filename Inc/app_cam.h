@@ -28,8 +28,8 @@ typedef struct {
   int is_rgb_swap;
 } CAM_conf_t;
 
-void CAM_Init(CAM_conf_t *conf);
-void CAM_CapturePipe_Start(uint8_t *capture_pipe_dst, uint32_t cam_mode);
+void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes);
+void CAM_CapturePipe_Start(uint8_t *capture_pipe_dst_pipe1, uint8_t *capture_pipe_dst_pipe2, uint32_t cam_mode, uint8_t two_pipes);
 void CAM_IspUpdate(void);
 void CAM_Deinit(void);
 

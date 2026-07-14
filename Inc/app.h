@@ -21,6 +21,21 @@
 
 #define USE_DCACHE
 
+/* Application entry point (called from main.c once FreeRTOS is running).
+ * Currently empty: the application state machine will be implemented here. */
 void app_run(void);
+
+/* --- Building blocks for the state machine (implemented in app.c) --- */
+
+/* One-time init: LEDs, TAMP button, SD card + FAT32 + SD writer task */
+void app_recorder_init(void);
+
+/* Config mode: full-res YUV422 captures served to the Python GUI over UART,
+ * then reception of the DCMIPP pipes configuration.  TAMP = record to SD. */
+void app_mode_config_run(void);
+
+/* Detect mode: greyscale dual-pipe captures (crop/decimation/downsize from
+ * the received configuration) served over UART.  TAMP = record to SD. */
+void app_mode_detect_run(void);
 
 #endif

@@ -146,7 +146,7 @@ static int32_t CMW_IMX335_SetFrequency(void *io_ctx, int32_t frequency)
 
 static int32_t CMW_IMX335_SetFramerate(void *io_ctx, int32_t framerate)
 {
-  const int32_t available_imx335_fps[] = {10, 15, 20, 25, 30};
+  const int32_t available_imx335_fps[] = {2, 5, 10, 15, 20, 25, 30};
 
   for (int i = 0; i < ARRAY_SIZE(available_imx335_fps); i++)
     if (framerate == available_imx335_fps[i])

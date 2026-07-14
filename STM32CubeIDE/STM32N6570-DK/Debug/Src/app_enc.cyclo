@@ -1,0 +1,10 @@
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:215:6:ENC_Init	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:278:6:ENC_DeInit	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:289:6:ENC_ResetAllocator	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:304:5:ENC_EndSession	3
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:331:6:ENC_ResetSession	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:336:5:ENC_EncodeFrame	11
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:359:7:EWLmalloc	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:368:6:EWLfree	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:373:7:EWLcalloc	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c:382:5:EWLMallocLinear	2

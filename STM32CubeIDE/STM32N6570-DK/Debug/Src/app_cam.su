@@ -1,0 +1,5 @@
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:167:6:CAM_Init	120	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:192:6:CAM_CapturePipe_Start	16	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:207:6:CAM_IspUpdate	8	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:215:6:CAM_Deinit	8	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:227:6:CMW_CAMERA_PIPE_ErrorCallback	0	static

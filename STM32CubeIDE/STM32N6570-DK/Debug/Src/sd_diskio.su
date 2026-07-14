@@ -1,0 +1,10 @@
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:79:12:sd_wait_ready	16	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:64:12:sd_wait_flag	24	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:46:6:BSP_SD_WriteCpltCallback	0	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:52:6:BSP_SD_ReadCpltCallback	0	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:58:6:BSP_SD_AbortCallback	0	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:92:9:disk_status	0	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:98:9:disk_initialize	8	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:111:9:disk_read	40	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:140:9:disk_write	40	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/sd_diskio.c:170:9:disk_ioctl	48	static

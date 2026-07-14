@@ -192,6 +192,11 @@ static const struct regval inck_6Mhz_regs[] = {
   {0x316a, 0x7C},
 };
 
+static const struct regval framerate_5fps_regs[] = {
+  {0x3030, 0x78},
+  {0x3031, 0x69},
+};
+
 static const struct regval framerate_10fps_regs[] = {
   {0x3030, 0xC0},
   {0x3031, 0x34},
@@ -724,6 +729,12 @@ int32_t IMX335_SetFramerate(IMX335_Object_t *pObj, int32_t framerate)
   uint32_t ret = IMX335_OK;
   switch (framerate)
   {
+	case 5:
+	  if(IMX335_WriteTable(pObj, framerate_5fps_regs, ARRAY_SIZE(framerate_5fps_regs)) != IMX335_OK)
+	  {
+		ret = IMX335_ERROR;
+	  }
+		break;
     case 10:
       if(IMX335_WriteTable(pObj, framerate_10fps_regs, ARRAY_SIZE(framerate_10fps_regs)) != IMX335_OK)
       {

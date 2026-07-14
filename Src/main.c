@@ -1,4 +1,4 @@
- /**
+  /**
  ******************************************************************************
  * @file    main.c
  * @author  GPM Application Team
@@ -44,8 +44,12 @@ extern int __uncached_bss_end__;
 
 UART_HandleTypeDef huart1;
 
+/* H264 encoder call chain requires significantly more stack than the default.
+ * The example project uses 2×configMINIMAL_STACK_SIZE for encode threads;
+ * use 4× here because stream_h264_usb also carries the full app frame. */
+#define MAIN_THREAD_STACK_SIZE (configMINIMAL_STACK_SIZE * 4)
 static StaticTask_t main_thread;
-static StackType_t main_thread_stack[configMINIMAL_STACK_SIZE];
+static StackType_t main_thread_stack[MAIN_THREAD_STACK_SIZE];
 
 static void SystemClock_Config(void);
 static void Security_Config();
@@ -124,6 +128,7 @@ static void Security_Config()
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC1 , &RIMC_master);
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_LTDC2 , &RIMC_master);
   HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_OTG1 , &RIMC_master);
+  HAL_RIF_RIMC_ConfigMasterAttributes(RIF_MASTER_INDEX_VENC , &RIMC_master);
 
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_NPU , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_DMA2D , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
@@ -134,6 +139,7 @@ static void Security_Config()
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_LTDCL2 , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_JPEG , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
   HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_OTG1HS , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
+  HAL_RIF_RISC_SetSlaveSecureAttributes(RIF_RISC_PERIPH_INDEX_VENC , RIF_ATTRIBUTE_SEC | RIF_ATTRIBUTE_PRIV);
 }
 
 static void IAC_Config(void)
@@ -273,7 +279,7 @@ static void CONSOLE_Config()
   HAL_GPIO_Init(GPIOE, &gpio_init);
 
   huart1.Instance          = USART1;
-  huart1.Init.BaudRate     = 115200;
+  huart1.Init.BaudRate 	   = 10000000;
   huart1.Init.Mode         = UART_MODE_TX_RX;
   huart1.Init.Parity       = UART_PARITY_NONE;
   huart1.Init.WordLength   = UART_WORDLENGTH_8B;
@@ -282,7 +288,7 @@ static void CONSOLE_Config()
   huart1.Init.OverSampling = UART_OVERSAMPLING_8;
   if (HAL_UART_Init(&huart1) != HAL_OK)
   {
-    while (1);
+    while (1); //TODO: enlever les while(1)
   }
 }
 
@@ -290,7 +296,7 @@ static int main_freertos()
 {
   TaskHandle_t hdl;
 
-  hdl = xTaskCreateStatic(main_thread_fct, "main", configMINIMAL_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1,
+  hdl = xTaskCreateStatic(main_thread_fct, "main", MAIN_THREAD_STACK_SIZE, NULL, tskIDLE_PRIORITY + 1,
                           main_thread_stack, &main_thread);
   assert(hdl != NULL);
 
@@ -342,6 +348,9 @@ static void main_thread_fct(void *arg)
   ret = BSP_LED_Init(LED_RED);
   assert(ret == BSP_ERROR_NONE);
 
+  ret = BSP_PB_Init(BUTTON_USER1, BUTTON_MODE_EXTI);
+  assert(ret == BSP_ERROR_NONE);
+
   /* Set all required IPs as secure privileged */
   Security_Config();
 
@@ -364,6 +373,18 @@ static void main_thread_fct(void *arg)
   LL_APB4_GRP2_EnableClockLowPower(~0);
   LL_APB5_GRP1_EnableClockLowPower(~0);
   LL_MISC_EnableClockLowPower(~0);
+
+  // Activer les horloges des banques AXISRAM3 à 6
+  __HAL_RCC_AXISRAM3_MEM_CLK_ENABLE();
+  __HAL_RCC_AXISRAM4_MEM_CLK_ENABLE();
+  __HAL_RCC_AXISRAM5_MEM_CLK_ENABLE();
+  __HAL_RCC_AXISRAM6_MEM_CLK_ENABLE();
+
+  // Désactiver le shutdown (bit 20 SRAMSD à 0)
+  RAMCFG_SRAM3_AXI_S->CR &= ~(1UL << 20);
+  RAMCFG_SRAM4_AXI_S->CR &= ~(1UL << 20);
+  RAMCFG_SRAM5_AXI_S->CR &= ~(1UL << 20);
+  RAMCFG_SRAM6_AXI_S->CR &= ~(1UL << 20);
 
   app_run();
 
@@ -391,37 +412,6 @@ HAL_StatusTypeDef MX_DCMIPP_ClockConfig(DCMIPP_HandleTypeDef *hdcmipp)
     return ret;
 
   return HAL_OK;
-}
-
-void HAL_PCD_MspInit(PCD_HandleTypeDef *hpcd)
-{
-  assert(hpcd->Instance == USB1_OTG_HS);
-
-  __HAL_RCC_PWR_CLK_ENABLE();
-
-  /* Enable the VDD33USB independent USB 33 voltage monitor */
-  HAL_PWREx_EnableVddUSBVMEN();
-
-  /* Wait until VDD33USB is ready */
-  while (__HAL_PWR_GET_FLAG(PWR_FLAG_USB33RDY) == 0U);
-
-  /* Enable VDDUSB supply */
-  HAL_PWREx_EnableVddUSB();
-
-  /* Enable USB1 OTG clock */
-  __HAL_RCC_USB1_OTG_HS_CLK_ENABLE();
-
-  /* Set FSEL to 24 Mhz */
-  USB1_HS_PHYC->USBPHYC_CR &= ~(0x7U << 0x4U);
-  USB1_HS_PHYC->USBPHYC_CR |= (0x2U << 0x4U);
-
-  /* Enable USB1 OTG PHY clock */
-  __HAL_RCC_USB1_OTG_HS_PHY_CLK_ENABLE();
-
-  HAL_NVIC_SetPriority(USB1_OTG_HS_IRQn, 6U, 0U);
-
-  /* Enable USB OTG interrupt */
-  HAL_NVIC_EnableIRQ(USB1_OTG_HS_IRQn);
 }
 
 #ifdef  USE_FULL_ASSERT

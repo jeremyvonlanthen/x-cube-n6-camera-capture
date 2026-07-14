@@ -432,3 +432,59 @@ void CVT_FormatYuv422ToYuv422Jpeg(uint8_t *p_dst, uint8_t *p_src, int width, int
 {
   CVT_FormatToYuv422Jpeg(p_dst, p_src, width, height, 2, CVT_CvtYuv422ToMcu422);
 }
+
+void CVT_FormatYuv422ToYuv422Jpeg_Row(uint8_t *p_dst, uint8_t *p_src,
+                                       int width, int height,
+                                       int row_start, int row_height)
+{
+  int src_pitch = width * 2;  // YUY2 = 2 bytes/pixel
+  int mcu_width = (width + 15) / 16;
+  int remain_height = row_height;
+  int x;
+
+  // Avancer dans la source jusqu'à la bande demandée
+  uint8_t *p_src_row = p_src + row_start * 8 * src_pitch;
+
+  for (x = 0; x < mcu_width; x++)
+  {
+    int remain_width = width - x * 16;
+    CVT_CvtYuv422ToMcu422(p_dst,
+                           p_src_row + x * 16 * 2,
+                           src_pitch,
+                           MIN(remain_width, 16),
+                           MIN(remain_height, 8));
+    p_dst += 256;
+  }
+}
+
+static void CVT_CvtGreyToMcu444(uint8_t *p_dst, uint8_t *p_src, int pitch, int x_limit, int y_limit)
+{
+  int x, y;
+  for (y = 0; y < y_limit; y++) {
+    for (x = 0; x < x_limit; x++) {
+      p_dst[y * 8 + x] = p_src[x];
+    }
+    p_src += pitch;
+  }
+}
+
+void CVT_FormatGreyToGreyJpeg_Row(uint8_t *p_dst, uint8_t *p_src,
+                                   int width, int height,
+                                   int row_start, int row_height,
+                                   int src_pitch)  // ← src_pitch séparé de width
+{
+  int mcu_width = (width + 7) / 8;
+  int x;
+
+  uint8_t *p_src_row = p_src + row_start * 8 * src_pitch;  // ← src_pitch
+
+  for (x = 0; x < mcu_width; x++) {
+    int remain_width = width - x * 8;
+    CVT_CvtGreyToMcu444(p_dst,
+                        p_src_row + x * 8,
+						src_pitch,  // ← src_pitch
+                        MIN(remain_width, 8),
+                        MIN(row_height, 8));
+    p_dst += 64;
+  }
+}

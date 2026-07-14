@@ -11,8 +11,9 @@ _Min_Stack_Size = 0x400; /* required amount of stack */
 /* Memories definition */
 MEMORY
 {
-  AXISRAM2_P2_S (xrw)       : ORIGIN = 0x34180400, LENGTH =  447K
-  AXI_SRAM_UNCACHED (xrw)   : ORIGIN = 0x341f0000, LENGTH =   64K
+  AXISRAM2_P2_S (xrw)       : ORIGIN = 0x34180400, LENGTH =  475K
+  AXI_SRAM_UNCACHED (xrw)   : ORIGIN = 0x341f7000, LENGTH =   36K
+  AXISRAM3456 (xrw) : ORIGIN = 0x34200000, LENGTH = 1792K  /* 4 x 448K */
   PSRAM (xrw)               : ORIGIN = 0x91000000, LENGTH =   16M
 }
 
@@ -166,6 +167,13 @@ SECTIONS
     *(.psram_bss)
     . = ALIGN(32);
   } >PSRAM
+
+  .axisram_bss (NOLOAD) :
+{
+  . = ALIGN(32);
+  *(.axisram_bss)
+  . = ALIGN(32);
+} >AXISRAM3456
 
   /* Remove information from the compiler libraries */
   /DISCARD/ :

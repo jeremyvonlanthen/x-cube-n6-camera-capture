@@ -19,9 +19,10 @@
 /* Includes ------------------------------------------------------------------*/
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_it.h"
+#include "stm32n6570_discovery.h"
+#include "stm32n6570_discovery_sd.h"
 
 #include "cmw_camera.h"
-#include "uvcl.h"
 
 /**
   * @brief   This function handles NMI exception.
@@ -100,8 +101,32 @@ void DCMIPP_IRQHandler(void)
   HAL_DCMIPP_IRQHandler(CMW_CAMERA_GetDCMIPPHandle());
 }
 
-void USB1_OTG_HS_IRQHandler(void)
+/* SDMMC2 (microSD via BSP).  DMA transfer completion is signaled through
+ * the BSP handler, which dispatches to BSP_SD_Write/ReadCpltCallback
+ * (implemented in sd_diskio.c). */
+void SDMMC2_IRQHandler(void)
 {
-  UVCL_IRQHandler();
+  BSP_SD_IRQHandler(0);
 }
 
+void HardFault_Handler(void)
+{
+//  printf("HardFault! HFSR=%08lX CFSR=%08lX BFAR=%08lX MMFAR=%08lX\n",
+//         SCB->HFSR, SCB->CFSR, SCB->BFAR, SCB->MMFAR);
+  while(1);
+}
+
+// Ajouter avec les autres handlers
+extern JPEG_HandleTypeDef hjpeg_instance; // forward déclaration
+
+void JPEG_IRQHandler(void)
+{
+  // accéder au hjpeg via jpg_ctx
+  extern void JPG_IRQHandler(void);
+  JPG_IRQHandler();
+}
+
+void EXTI13_IRQHandler(void)  // à adapter selon BUTTON_USER1_EXTI_IRQn
+{
+    BSP_PB_IRQHandler(BUTTON_USER1);
+}

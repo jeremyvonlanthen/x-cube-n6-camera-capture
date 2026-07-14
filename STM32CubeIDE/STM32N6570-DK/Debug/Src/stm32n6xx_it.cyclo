@@ -1,0 +1,11 @@
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:32:6:NMI_Handler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:41:6:MemManage_Handler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:54:6:BusFault_Handler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:67:6:SecureFault_Handler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:80:6:DebugMon_Handler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:94:6:CSI_IRQHandler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:99:6:DCMIPP_IRQHandler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:107:6:SDMMC2_IRQHandler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:112:6:HardFault_Handler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:122:6:JPEG_IRQHandler	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/stm32n6xx_it.c:129:6:EXTI13_IRQHandler	1

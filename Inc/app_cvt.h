@@ -30,5 +30,12 @@ void CVT_FormatRgbArgbToYuv422Jpeg(uint8_t *p_dst, uint8_t *p_src, int width, in
 void CVT_FormatRgb888ToYuv422Jpeg(uint8_t *p_dst, uint8_t *p_src, int width, int height);
 void CVT_FormatRgb565ToYuv422Jpeg(uint8_t *p_dst, uint8_t *p_src, int width, int height);
 void CVT_FormatYuv422ToYuv422Jpeg(uint8_t *p_dst, uint8_t *p_src, int width, int height);
-
+// Nouvelle fonction — convertit une seule bande de 8 lignes
+void CVT_FormatYuv422ToYuv422Jpeg_Row(uint8_t *p_dst, uint8_t *p_src,
+                                       int width, int height,
+                                       int row_start, int row_height);
+void CVT_FormatGreyToGreyJpeg_Row(uint8_t *p_dst, uint8_t *p_src,
+                                   int width, int height,
+                                   int row_start, int row_height,
+                                   int src_pitch);
 #endif

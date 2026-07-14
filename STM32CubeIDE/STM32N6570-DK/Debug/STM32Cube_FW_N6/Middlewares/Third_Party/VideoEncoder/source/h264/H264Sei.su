@@ -1,0 +1,8 @@
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:59:6:H264InitSei	12	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:110:6:H264UpdateSeiTS	16	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:157:6:H264FillerSei	16	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:188:6:H264BufferingSei	24	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:279:6:H264PicTimingSei	24	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:352:6:H264UserDataUnregSei	24	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:397:6:H264RecoveryPointSei	24	static
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.c:445:6:H264ScalabilityInfoSei	56	static

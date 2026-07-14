@@ -18,27 +18,12 @@
 #ifndef APP_CONFIG
 #define APP_CONFIG
 
-/* ifndef so you can change below without code modification */
-#ifndef IMG_STREAMS
-#ifdef STM32N6570_DK_REV
-#define IMG_STREAMS {{UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 224, 224, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 256, 256, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 480, 480, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 640, 480, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 800, 480, 30}};
-#define MAX_IMG_FRAME_SIZE (800 * 480 * 2)
-#else
-#define IMG_STREAMS {{UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 224, 224, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 256, 256, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 480, 480, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 640, 480, 30}, \
-                     {UVCL_PAYLOAD_UNCOMPRESSED_YUY2, 800, 480, 30}};
-#define MAX_IMG_FRAME_SIZE (800 * 480 * 2)
-#endif
-#else
-#ifndef MAX_IMG_FRAME_SIZE
-#error MAX_IMG_FRAME_SIZE must be define
-#endif
-#endif
+/* Full-resolution capture buffer: one 2592x1944 frame, 2 bytes/pixel
+ * (YUV422 in config mode; also holds the 2 RGB565 720p frames + the
+ * encoded-video ring buffer during H264 recording — see app.c) */
+#define MAX_CAPTURE_FRAME_SIZE (2592 * 1944 * 2)
+
+/* Hardware JPEG encoder output buffer */
+#define MAX_JPEG_FRAME_SIZE    (1 * 1024 * 1024)
 
 #endif

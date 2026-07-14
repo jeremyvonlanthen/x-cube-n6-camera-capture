@@ -23,11 +23,13 @@
 
 #define JPG_SRC_YUV422 0
 #define JPG_SRC_RGB888 1
+#define JPG_SRC_GREY   2
 
 typedef struct {
   int width;
   int height;
   int fmt_src;
+  int full_width;
 } JPG_conf_t;
 
 int JPG_Init(JPG_conf_t *conf);

@@ -59,7 +59,10 @@ C_SOURCES += Src/app_cvt.c
 C_SOURCES += Src/app_fuseprogramming.c
 C_SOURCES += Src/stm32n6xx_it.c
 C_SOURCES += Src/app_cam.c
+C_SOURCES += Src/app_enc.c
 C_SOURCES += Src/freertos_bsp.c
+C_SOURCES += Src/app_rec.c
+C_SOURCES += Src/sd_diskio.c
 
 # ASM sources
 ASM_SOURCES =
@@ -164,16 +167,12 @@ all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).hex $(BUILD_DIR)/$(TARGET
 # Include mk files
 #######################################
 include mks/fw.mk
+include mks/venc.mk
 include mks/cmw.mk
 include mks/freertos.mk
+include mks/fatfs.mk
 include mks/gcc.mk
 include mks/iar.mk
-UVC_LIB_REL_DIR := Lib/uvcl
-UVC_LIB_USB_DEVICE_STACK := USBX
-UVC_LIB_RTOS := FREERTOS
-UVC_LIB_USE_DMA := YES
-USBX_REL_DIR := $(FW_REL_DIR)/Middlewares/ST/usbx
-include Lib/uvcl/uvc_lib.mk
 
 #######################################
 # build the application

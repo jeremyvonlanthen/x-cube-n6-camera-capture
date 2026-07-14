@@ -39,43 +39,29 @@
 #define SENSOR_WIDTH     0
 #define SENSOR_HEIGHT    0
 
-static const char *sensor_names[] = {
-  "CMW_UNKNOWN",
-  "CMW_VD66GY",
-  "CMW_IMX335",
-  "CMW_VD55G1",
-  "CMW_VD1943",
-};
-
 static CMW_Sensor_Name_t sensor;
 static int is_sensor_valid = 0;
 
 static int CAM_getFlipMode(CMW_Sensor_Name_t sensor)
 {
   int sensor_mirror_flip = CMW_MIRRORFLIP_NONE;
-  int sensor_name_idx = 0;
 
   switch (sensor) {
   case CMW_VD66GY_Sensor:
     sensor_mirror_flip = SENSOR_VD66GY_FLIP;
-    sensor_name_idx = 1;
     break;
   case CMW_IMX335_Sensor:
     sensor_mirror_flip = SENSOR_IMX335_FLIP;
-    sensor_name_idx = 2;
     break;
   case CMW_VD55G1_Sensor:
     sensor_mirror_flip = SENSOR_VD55G1_FLIP;
-    sensor_name_idx = 3;
     break;
   case CMW_VD1943_Sensor:
     sensor_mirror_flip = SENSOR_VD1943_FLIP;
-    sensor_name_idx = 4;
     break;
   default:
     assert(0);
   }
-  printf("Detected %s\n", sensor_names[sensor_name_idx]);
 
   return sensor_mirror_flip;
 }
@@ -95,6 +81,9 @@ static int CAM_FormatToBpp(int dcmipp_output_format)
     break;
   case DCMIPP_PIXEL_PACKER_FORMAT_RGB888_YUV444_1:
     bpp = 3;
+    break;
+  case DCMIPP_PIXEL_PACKER_FORMAT_ARGB8888:
+    bpp = 4;
     break;
   default:
     assert(0);
@@ -138,7 +127,7 @@ static void CAM_EnableYuv(uint32_t Pipe)
   assert(ret == HAL_OK);
 }
 
-static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int sensor_height, CAM_conf_t *conf)
+static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int sensor_height, CAM_conf_t *conf, uint8_t two_pipes)
 {
   CMW_DCMIPP_Conf_t dcmipp_conf;
   uint32_t hw_pitch;
@@ -154,15 +143,28 @@ static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int s
   dcmipp_conf.enable_swap = cam_conf->is_rgb_swap;
   dcmipp_conf.enable_gamma_conversion = 0;
   CAM_InitCropConfig(&dcmipp_conf.manual_conf, sensor_width, sensor_height, conf);
+
+  /*Init Pipe1*/
   ret = CMW_CAMERA_SetPipeConfig(DCMIPP_PIPE1, &dcmipp_conf, &hw_pitch);
   assert(ret == HAL_OK);
   assert(hw_pitch == dcmipp_conf.output_width * dcmipp_conf.output_bpp);
+
+  if(two_pipes)
+  {
+	  dcmipp_conf.output_format = DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1;
+	  dcmipp_conf.output_bpp = 1;
+
+	  /*Init Pipe2*/
+	  ret = CMW_CAMERA_SetPipeConfig(DCMIPP_PIPE2, &dcmipp_conf, &hw_pitch);
+	  assert(ret == HAL_OK);
+	  assert(hw_pitch == dcmipp_conf.output_width * dcmipp_conf.output_bpp);
+  }
 
   if (cam_conf->dcmipp_output_format == DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1)
     CAM_EnableYuv(DCMIPP_PIPE1);
 }
 
-void CAM_Init(CAM_conf_t *conf)
+void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes)
 {
   CMW_CameraInit_t cam_conf;
   int ret;
@@ -184,15 +186,22 @@ void CAM_Init(CAM_conf_t *conf)
   /* CMW_CAMERA_Init update width height */
   assert(cam_conf.width);
   assert(cam_conf.height);
-  DCMIPP_PipeInitCapture(conf, cam_conf.width, cam_conf.height, conf);
+  DCMIPP_PipeInitCapture(conf, cam_conf.width, cam_conf.height, conf, two_pipes);
 }
 
-void CAM_CapturePipe_Start(uint8_t *capture_pipe_dst, uint32_t cam_mode)
+void CAM_CapturePipe_Start(uint8_t *capture_pipe_dst_pipe1, uint8_t *capture_pipe_dst_pipe2, uint32_t cam_mode, uint8_t two_pipes)
 {
   int ret;
 
-  ret = CMW_CAMERA_Start(DCMIPP_PIPE1, capture_pipe_dst, cam_mode);
+  ret = CMW_CAMERA_Start(DCMIPP_PIPE1, capture_pipe_dst_pipe1, cam_mode);
   assert(ret == CMW_ERROR_NONE);
+
+  if(two_pipes)
+  {
+	  ret = CMW_CAMERA_Start(DCMIPP_PIPE2, capture_pipe_dst_pipe2, cam_mode);
+	  assert(ret == CMW_ERROR_NONE);
+  }
+
 }
 
 void CAM_IspUpdate(void)
@@ -211,7 +220,13 @@ void CAM_Deinit()
   assert(ret == CMW_ERROR_NONE);
 }
 
+/* DCMIPP pipe error counter (overrun = corrupted line endings on the right
+ * side of the image).  Displayed in the [REC] periodic report (app.c). */
+volatile uint32_t dcmipp_err_count = 0;
+
 void CMW_CAMERA_PIPE_ErrorCallback(uint32_t pipe)
 {
   /* FIXME : Need to tune sensor/ipplug so we can remove this implementation */
+  if (pipe == DCMIPP_PIPE1)
+    dcmipp_err_count++;
 }

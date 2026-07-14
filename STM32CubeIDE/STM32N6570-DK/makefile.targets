@@ -1,0 +1,70 @@
+# VideoEncoder + app_enc build support
+# This file is included by Debug/makefile via "-include ../makefile.targets"
+# Paths below are relative to the Debug/ build directory (make's CWD)
+
+# Pull in compile rules for all VideoEncoder object files
+-include STM32Cube_FW_N6/Middlewares/ST/VideoEncoder_EWL/subdir.mk
+-include STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/subdir.mk
+-include STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/subdir.mk
+
+# Compile rule for stm32n6xx_ll_venc.o (standard HAL flags, no VideoEncoder includes needed)
+STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_venc.o: C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_venc.c
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DSTM32N657xx -DUSE_FULL_ASSERT -DUSE_FULL_LL_DRIVER -DVECT_TAB_SRAM -DUSE_IMX335_SENSOR -DUSE_VD66GY_SENSOR -DUSE_VD55G1_SENSOR -DUSE_VD1943_SENSOR -DCAMERA_SELFY=1 -DSTM32N6570_DK_REV -DTX_MAX_PARALLEL_NETWORKS=1 -DFEAT_FREERTOS -c -I../../../Inc -I"C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32CubeIDE/STM32N6570-DK/Src" -I../../../STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../STM32Cube_FW_N6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../STM32Cube_FW_N6/Drivers/CMSIS/Include -I../../../STM32Cube_FW_N6/Drivers/CMSIS/DSP/Include -I../../../STM32Cube_FW_N6/Drivers/BSP/Components/Common -I../../../STM32Cube_FW_N6/Drivers/BSP/STM32N6570-DK -I../../../STM32Cube_FW_N6/Drivers/BSP/Components/aps256xx -I../../../Lib/Camera_Middleware -I../../../Lib/Camera_Middleware/sensors -I../../../Lib/Camera_Middleware/sensors/imx335 -I../../../Lib/Camera_Middleware/sensors/vd55g1 -I../../../Lib/Camera_Middleware/sensors/vd6g -I../../../Lib/Camera_Middleware/sensors/vd1943 -I../../../Lib/Camera_Middleware/ISP_Library/isp/Inc -I../../../Lib/FreeRTOS/Source/include -I../../../Lib/FreeRTOS/Source/portable/GCC/ARM_CM55_NTZ/non_secure -Os -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+# Compile rule for app_enc.o (adds VideoEncoder include paths)
+Src/app_enc.o: C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_enc.c
+	arm-none-eabi-gcc "$<" -mcpu=cortex-m55 -std=gnu11 -g3 -DSTM32N657xx -DUSE_FULL_ASSERT -DUSE_FULL_LL_DRIVER -DVECT_TAB_SRAM -DUSE_IMX335_SENSOR -DUSE_VD66GY_SENSOR -DUSE_VD55G1_SENSOR -DUSE_VD1943_SENSOR -DCAMERA_SELFY=1 -DSTM32N6570_DK_REV -DTX_MAX_PARALLEL_NETWORKS=1 -DFEAT_FREERTOS -c -I../../../Inc -I"C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32CubeIDE/STM32N6570-DK/Src" -I../../../STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Inc -I../../../STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Inc/Legacy -I../../../STM32Cube_FW_N6/Drivers/CMSIS/Device/ST/STM32N6xx/Include -I../../../STM32Cube_FW_N6/Drivers/CMSIS/Include -I../../../STM32Cube_FW_N6/Drivers/CMSIS/DSP/Include -I../../../STM32Cube_FW_N6/Drivers/BSP/Components/Common -I../../../STM32Cube_FW_N6/Drivers/BSP/STM32N6570-DK -I../../../STM32Cube_FW_N6/Drivers/BSP/Components/aps256xx -I../../../Lib/Camera_Middleware -I../../../Lib/Camera_Middleware/sensors -I../../../Lib/Camera_Middleware/sensors/imx335 -I../../../Lib/Camera_Middleware/sensors/vd55g1 -I../../../Lib/Camera_Middleware/sensors/vd6g -I../../../Lib/Camera_Middleware/sensors/vd1943 -I../../../Lib/Camera_Middleware/ISP_Library/isp/Inc -I../../../Lib/FreeRTOS/Source/include -I../../../Lib/FreeRTOS/Source/portable/GCC/ARM_CM55_NTZ/non_secure -I../../../STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/inc -I../../../STM32Cube_FW_N6/Middlewares/ST/VideoEncoder_EWL -I../../../STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common -I../../../STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264 -Os -ffunction-sections -fdata-sections -Wall -fstack-usage -fcyclomatic-complexity -mcmse -MMD -MP -MF"$(@:%.o=%.d)" -MT"$@" --specs=nano.specs -mfpu=fpv5-d16 -mfloat-abi=hard -mthumb -o "$@"
+
+# Append extra objects to USER_OBJS so the linker picks them up (expanded at recipe time)
+USER_OBJS += \
+  STM32Cube_FW_N6/Middlewares/ST/VideoEncoder_EWL/ewl_impl.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encInputLineBuffer.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encasiccontroller.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encasiccontroller_v2.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encpreprocess.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encswhwregisters.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Cabac.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264CodeFrame.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Denoise.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264EncApi.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Init.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Mad.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264NalUnit.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264PictureBuffer.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264PictureParameterSet.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264PutBits.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264RateControl.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264SequenceParameterSet.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Slice.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264TestId.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.o \
+  STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_venc.o \
+  Src/app_enc.o
+
+# Force the ELF target to depend on the new objects so make compiles them before linking
+DIAS.elf: \
+  STM32Cube_FW_N6/Middlewares/ST/VideoEncoder_EWL/ewl_impl.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encInputLineBuffer.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encasiccontroller.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encasiccontroller_v2.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encpreprocess.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/common/encswhwregisters.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Cabac.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264CodeFrame.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Denoise.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264EncApi.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Init.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Mad.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264NalUnit.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264PictureBuffer.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264PictureParameterSet.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264PutBits.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264RateControl.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Sei.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264SequenceParameterSet.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264Slice.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/H264TestId.o \
+  STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.o \
+  STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_ll_venc.o \
+  Src/app_enc.o
