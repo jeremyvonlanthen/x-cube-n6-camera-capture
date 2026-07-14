@@ -1,5 +1,7 @@
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:167:6:CAM_Init	11
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:192:6:CAM_CapturePipe_Start	2
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:207:6:CAM_IspUpdate	1
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:215:6:CAM_Deinit	1
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:227:6:CMW_CAMERA_PIPE_ErrorCallback	2
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:130:13:DCMIPP_PipeInitCapture	9
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:172:6:CAM_Pipe1_SetFormat	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:188:6:CAM_Init	3
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:213:6:CAM_CapturePipe_Start	2
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:228:6:CAM_IspUpdate	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:236:6:CAM_Deinit	1
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_cam.c:248:6:CMW_CAMERA_PIPE_ErrorCallback	2

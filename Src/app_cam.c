@@ -164,6 +164,27 @@ static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int s
     CAM_EnableYuv(DCMIPP_PIPE1);
 }
 
+/* Reconfigures PIPE1 ONLY (pixel packer format + full-frame crop), without
+ * touching the sensor: exposure/gain/ISP state are preserved, so no AE
+ * warmup is needed afterwards.  Used to grab a full-sensor COLOR snapshot
+ * while the camera runs in detect (mono, cropped/downsized) mode.
+ * The pipe must be stopped (snapshot mode) when calling this. */
+void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height, int output_format)
+{
+  CAM_conf_t conf;
+
+  conf.capture_width        = sensor_width;
+  conf.capture_height       = sensor_height;
+  conf.fps                  = 0; /* unused by the pipe config */
+  conf.dcmipp_output_format = output_format;
+  conf.is_rgb_swap          = 0;
+
+  /* Full-frame ROI (ratio 1:1), sets format/pitch and re-enables the YUV
+   * conversion when needed; overrides any crop/downsize set by the detect
+   * configuration. */
+  DCMIPP_PipeInitCapture(&conf, sensor_width, sensor_height, &conf, 0);
+}
+
 void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes)
 {
   CMW_CameraInit_t cam_conf;

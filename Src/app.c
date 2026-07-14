@@ -271,9 +271,16 @@ static void camera_warmup(uint32_t output_format)
   cam_conf.dcmipp_output_format = output_format;
   cam_conf.is_rgb_swap          = 0;
   CAM_Init(&cam_conf, two_pipes);
+
+  /* Required on re-warmup: the frame event callback only increments
+   * warmup_frames while warmup_done == 0.  Without this reset, the second
+   * warmup (DETECT_MODE_WARMUP) waits forever since warmup_done is still 1
+   * from the previous mode. */
+  warmup_done = 0;
+  warmup_frames = 0;
+
   CAM_CapturePipe_Start(buffer_full_frame, buffer_pipe2_warmup, CMW_MODE_CONTINUOUS, 0);
 
-  warmup_frames = 0;
   while (warmup_frames < WARMUP_FRAMES_TARGET)
     vTaskDelay(pdMS_TO_TICKS(10));
 
@@ -440,6 +447,15 @@ static void record_jpeg_sd(void)
 
   uart_busy = 0;
 
+  /* Full-sensor COLOR snapshot while the camera runs in detect (mono,
+   * cropped/downsized) mode: reconfigure PIPE1 ONLY to full-frame YUV422.
+   * The sensor is untouched, so the AE/exposure already converged during
+   * the detect warmup stay valid -> no delay, color is immediate.
+   * No restore needed: record_h264_sd() reconfigures the camera right
+   * after, and DETECT_MODE_WARMUP + PIPES_CONFIGURATION re-apply the
+   * detect setup once the recording is done. */
+  CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
+
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
   snapshot_in_progress = 1;
   frame_ready = 0;
@@ -458,7 +474,7 @@ static void record_jpeg_sd(void)
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
 
-  /* Hardware JPEG encode: YUV422 in config mode, greyscale in detect mode */
+  /* Hardware JPEG encode: pipe1 was switched to full-frame YUV422 above */
   jpg_conf.width      = SENSOR_WIDTH;
   jpg_conf.height     = SENSOR_HEIGHT;
   jpg_conf.fmt_src    = JPG_SRC_YUV422; //JPG_SRC_GREY;
@@ -494,9 +510,6 @@ static void record_h264_sd(void)
 
   uart_busy = 0;  /* re-enable printf (send_pipes sets uart_busy=1 permanently) */
   printf("[REC] record_h264_sd entry hw_init=%d\r\n", hw_initialized);
-
-  BSP_LED_Off(LED_RED);
-  BSP_LED_Off(LED_GREEN);
 
   /* Switch camera to 1280x720 RGB565 @ 30 fps for H264.
    * RGB565 (2 B/px) halves PSRAM bandwidth vs ARGB8888: fixes DCMIPP
@@ -545,7 +558,6 @@ static void record_h264_sd(void)
                 buffer_full_frame + 2 * H264_FRAME_BYTES,
                 MAX_CAPTURE_FRAME_SIZE - 2 * H264_FRAME_BYTES) != 0) {
     printf("[REC] REC_Start failed, recording aborted\r\n");
-    BSP_LED_On(LED_RED);
     warmup_done = 0;
     return;
   }
@@ -660,13 +672,6 @@ static void record_h264_sd(void)
     printf("[REC] MP4 file finalized OK\r\n");
   else
     printf("[REC] MP4 finalize FAILED\r\n");
-
-  /* Do NOT call CAM_Deinit() here — camera_warmup() already calls it when
-   * !first_mode (i.e. on every call after the first).  Calling it here too
-   * causes a double-deinit → CMW_CAMERA_DeInit assert → HardFault. */
-
-  BSP_LED_On(LED_RED);
-  BSP_LED_On(LED_GREEN);
 
   /* Re-enter current mode from scratch */
   warmup_done = 0;
@@ -818,7 +823,7 @@ void app_run(void)
 		case RECORDING:
 			record_jpeg_sd();
 			record_h264_sd();
-			BSP_LED_On(LED_GREEN);
+			BSP_LED_Off(LED_GREEN);
 
 			/* record_h264_sd() left the camera in 720p RGB565 and cleared
 			 * warmup_done: go through a full detect warmup again (the pipes
