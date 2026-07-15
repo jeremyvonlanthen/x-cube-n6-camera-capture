@@ -403,7 +403,7 @@ int REC_Init(void)
   res = f_mount(&fs, "", 1);
   if (res != FR_OK) return -1;
 
-  printf("[uSD] uSD mounted (FAT type %d)\r\n", fs.fs_type);
+  printf("[uSD] uSD mounted and detected (FAT type %d)\r\n", fs.fs_type);
 
   /* FreeRTOS objects */
   q_filled = xQueueCreateStatic(REC_MSG_NB, sizeof(rec_msg_t),

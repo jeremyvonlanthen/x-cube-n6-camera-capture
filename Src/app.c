@@ -292,7 +292,7 @@ static void rtc_set_datetime(const uint8_t dt[6])
 
   HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BIN);
   HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BIN);
-  printf("[RTC] set to 20%02u-%02u-%02u %02u:%02u:%02u\r\n",
+  printf("[RTC] date and time set to 20%02u-%02u-%02u %02u:%02u:%02u\r\n",
          dt[0], dt[1], dt[2], dt[3], dt[4], dt[5]);
 }
 
@@ -813,13 +813,13 @@ int check_SD(void)
 	switch(rec_ready)
 	{
 	case 0:
-		printf("[uSD] uSD init successful\r\n");
+		printf("[uSD] init successful\r\n");
 		break;
 	case -1:
-		printf("[uSD] f_mount failed - card FAT32-formatted?\r\n");
+		printf("[uSD] required formatting failed (FAT32)\r\n");
 		break;
 	case -2:
-		printf("[uSD] uSD init failed - card inserted?\r\n");
+		printf("[uSD] no uSD card detected/mounted\r\n");
 		break;
 	case -3:
 		printf("[uSD] SDMMC2 clock config failed\r\n");
@@ -872,7 +872,7 @@ void app_run(void)
 			break;
 
 		case CONFIG_MODE_WARMUP:
-			printf("[FSM] config mode warmup\r\n");
+			printf("[FSM] config mode warmup...\r\n");
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 			printf("[FSM] warmup ended\r\n");
 
@@ -886,15 +886,14 @@ void app_run(void)
 
 			if (cmd == 'S'){
 				int jpeg_len = capture_yuv();
+				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
+				HAL_Delay(50);
 				send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
 			}
 			else if (cmd == 'T'){
-				/* Set RTC date/time: 6 bytes (year-2000, month, day,
-				 * hour, minute, second) sent right after the 'T'. */
 				uint8_t dt[6] = { 0 };
 				if (HAL_UART_Receive(&huart1, dt, sizeof(dt), 1000) == HAL_OK)
 					rtc_set_datetime(dt);
-				printf("[FSM] RTC set\r\n");
 			}
 			else if(cmd == 'V'){
 				state = RECEIVE_PIPES_CONFIG;
@@ -908,6 +907,7 @@ void app_run(void)
 			HAL_UART_Receive(&huart1, buffer, sizeof(Config_t), 100);
 			memcpy(&config_py, buffer, sizeof(Config_t));
 			if (config_py.magic == CONFIG_MAGIC){
+				printf("[FSM] pipes config successfully received\r\n");
 				answer = 'V';
 				HAL_UART_Transmit(&huart1, &answer, 1, 100);
 
@@ -918,7 +918,7 @@ void app_run(void)
 			break;
 
 		case DETECT_MODE_WARMUP:
-			printf("[FSM] start detection mode warmup\r\n");
+			printf("[FSM] detection mode warmup...\r\n");
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 			printf("[FSM] warmup ended\r\n");
 
@@ -926,7 +926,7 @@ void app_run(void)
 			break;
 
 		case PIPES_CONFIGURATION:
-			printf("[FSM] pipes configuration\r\n");
+			printf("[FSM] pipes configuration procedure\r\n");
 			dcmipp_apply_detect_config();
 
 			state = MOVEMENT_DETECTION;
@@ -935,7 +935,6 @@ void app_run(void)
 
 		case MOVEMENT_DETECTION:
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
-				BSP_LED_Off(LED_GREEN);
 				printf("[FSM] movement detected!\r\n");
 				state = RECORDING;
 				break;
@@ -944,17 +943,12 @@ void app_run(void)
 			break;
 
 		case RECORDING:
-			/* One timestamp for this event, shared by the JPEG and the MP4 so
-			 * both files carry the same "AAAA-MM-JJ_HH-MM-SS" base name. */
 			char timestamp[20];
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
 
 			record_jpeg_sd(timestamp);
 			record_h264_sd(timestamp);
-			/* record_h264_sd() left the camera in 720p RGB565 and cleared
-			 * warmup_done: go through a full detect warmup again (the pipes
-			 * config is re-applied after it). */
-			BSP_LED_On(LED_GREEN);
+
 			state = DETECT_MODE_WARMUP;
 			break;
 

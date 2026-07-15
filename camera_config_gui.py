@@ -18,6 +18,7 @@ Usage       : python camera_config_gui.py
 
 import sys
 import time
+import queue
 import struct
 import serial
 import serial.tools.list_ports
@@ -193,231 +194,189 @@ class ImageDisplay(QLabel):
 
 
 # =============================================================================
-#  Thread moniteur série : lit en continu les printf du STM32
+#  Thread série unique : SEUL propriétaire du port COM
 # =============================================================================
+#  Le port est ouvert une seule fois (à la connexion) et lu en continu : tous
+#  les printf du STM sont journalisés sans interruption.  Les boutons n'ouvrent
+#  jamais le port ; ils déposent une commande (capture / config) dans une file
+#  que ce thread exécute, puis il reprend la lecture.  Plus aucune fermeture/
+#  réouverture => plus aucun printf perdu.
 
-class SerialMonitorThread(QThread):
-    line_received = pyqtSignal(str)
+class SerialWorker(QThread):
+    line_received  = pyqtSignal(str)           # ligne printf du STM (journal)
+    image_received = pyqtSignal(object, str)   # numpy img, description
+    capture_error  = pyqtSignal(str)
+    config_result  = pyqtSignal(bool, str)     # success, message
+    status         = pyqtSignal(str)
+    port_opened    = pyqtSignal(bool)          # True = port ouvert
 
     def __init__(self, port):
         super().__init__()
-        self.port = port
+        self.port     = port
+        self._cmd_q   = queue.Queue()
         self._running = True
 
+    # ── API appelée depuis le thread GUI ────────────────────────────────────
+    def request_capture(self):
+        self._cmd_q.put(('capture', None))
+
+    def request_config(self, data_bytes):
+        self._cmd_q.put(('config', data_bytes))
+
+    def stop(self):
+        self._running = False
+        self.wait(2500)
+
+    # ── Boucle du thread ────────────────────────────────────────────────────
     def run(self):
         try:
             ser = serial.Serial(self.port, UART_BAUDRATE, timeout=0.2)
         except serial.SerialException as e:
             self.line_received.emit(f"[moniteur] ouverture impossible : {e}")
+            self.port_opened.emit(False)
             return
+        self.port_opened.emit(True)
 
-        buf = bytearray()
+        line         = bytearray()   # ligne printf en cours de reconstruction
+        awaiting_ack = False         # attente de l'ack config
+        saw_fail     = False         # au moins un 'F' reçu pendant l'attente
+        ack_deadline = 0.0
+
         while self._running:
+            # 1) Commande en attente ?
+            try:
+                cmd, arg = self._cmd_q.get_nowait()
+            except queue.Empty:
+                cmd = None
+
+            if cmd == 'capture':
+                line = bytearray()
+                self._do_capture(ser)
+                continue
+            elif cmd == 'config':
+                try:
+                    now = datetime.now()
+                    tpayload = bytes([now.year - 2000, now.month, now.day,
+                                      now.hour, now.minute, now.second])
+                    ser.reset_input_buffer()
+                    # 'T' : règle la RTC (avant 'V', pendant SEND_YUV_FRAME)
+                    ser.write(b'T' + tpayload); ser.flush()
+                    time.sleep(0.2)
+                    # 'V' : passe en réception de config, puis la structure
+                    ser.write(b'V'); ser.flush()
+                    time.sleep(0.3)
+                    ser.write(arg); ser.flush()
+                except Exception as e:
+                    self.config_result.emit(False, f"Erreur série : {e}")
+                    continue
+                line = bytearray()
+                awaiting_ack = True
+                saw_fail     = False
+                ack_deadline = time.time() + 5.0
+                # on retombe dans la lecture normale (journal + détection ack)
+
+            # 2) Lecture continue : journalise les printf, détecte l'ack
             try:
                 data = ser.read(256)
             except Exception:
                 break
-            if not data:
-                continue
-            buf.extend(data)
-            while b'\n' in buf:
-                line, _, rest = buf.partition(b'\n')
-                buf = bytearray(rest)
-                text = line.decode('ascii', errors='replace').rstrip('\r')
-                if text:
-                    self.line_received.emit(text)
+
+            for byte in data:
+                # ack config = octet isolé 'V'/'F' (hors d'une ligne de texte).
+                # Le µC peut envoyer un ou plusieurs 'F' (config pas encore
+                # prête) AVANT le 'V' final : seul 'V' valide, 'F' = on attend.
+                if awaiting_ack and len(line) == 0 and byte in (0x56, 0x46):
+                    if byte == 0x56:             # 'V' : succès définitif
+                        awaiting_ack = False
+                    else:                        # 'F' : pas encore, on continue
+                        saw_fail = True
+                    continue
+                if byte == 0x0A:                 # \n : fin de ligne
+                    text = line.decode('ascii', errors='replace').rstrip('\r')
+                    line = bytearray()
+                    if text:
+                        self.line_received.emit(text)
+                elif byte != 0x0D:               # ignore \r
+                    line.append(byte)
+
+            if awaiting_ack and time.time() > ack_deadline:
+                awaiting_ack = False
+                if saw_fail:
+                    self.config_result.emit(
+                        False, "⚠  Config refusée par le microcontrôleur (F).")
+                else:
+                    self.config_result.emit(
+                        False, "⚠  Pas de réponse du microcontrôleur (timeout).")
 
         try:
             ser.close()
         except Exception:
             pass
+        self.port_opened.emit(False)
 
-    def stop(self):
-        self._running = False
-        self.wait(1500)
-
-
-# =============================================================================
-#  Thread de capture UART
-# =============================================================================
-
-class CaptureThread(QThread):
-    image_received = pyqtSignal(object, str)   # numpy img, description
-    error          = pyqtSignal(str)
-    status         = pyqtSignal(str)
-
-    def __init__(self, port, save_folder=None):
-        super().__init__()
-        self.port        = port
-        self.save_folder = save_folder   # None = pas de sauvegarde sur disque
-
-    def run(self):
+    # ── Capture binaire (protocole 'S') ─────────────────────────────────────
+    def _do_capture(self, ser):
         try:
-            cdc = serial.Serial(self.port, UART_BAUDRATE, timeout=2)
-            time.sleep(0.5)
+            ser.reset_input_buffer()
+            ser.write(b'S'); ser.flush()
 
-            # Vider le buffer
-            cdc.reset_input_buffer()
-            time.sleep(0.1)
-            while cdc.in_waiting:
-                cdc.read(cdc.in_waiting)
-                time.sleep(0.1)
-
-            cdc.write(b'S')
-            cdc.flush()
-
-            # Attendre sync 0xAA (la capture + encodage JPEG côté µC prend
-            # un peu de temps : on laisse jusqu'à ~10 s)
-            cdc.timeout = 2
+            # Sync 0xAA (capture + encodage JPEG : jusqu'à ~10 s)
+            ser.timeout = 2
             deadline = time.time() + 10.0
             got_sync = False
             while time.time() < deadline:
-                sync = cdc.read(1)
-                if sync == b'\xaa':
+                if ser.read(1) == b'\xaa':
                     got_sync = True
                     break
             if not got_sync:
-                self.error.emit("Timeout — pas de sync reçu (le µC est-il en mode config ?).")
-                cdc.close()
+                self.capture_error.emit(
+                    "Timeout — pas de sync reçu (le µC est-il en mode config ?).")
                 return
 
-            # Lire taille
-            cdc.timeout = 60
-            size_bytes = cdc.read(4)
+            ser.timeout = 60
+            size_bytes = ser.read(4)
             if len(size_bytes) != 4:
-                self.error.emit("Erreur de lecture de la taille JPEG.")
-                cdc.close()
+                self.capture_error.emit("Erreur de lecture de la taille JPEG.")
                 return
-
             jpeg_size = int.from_bytes(size_bytes, 'little')
-            self.status.emit(f"Réception de l'image ({jpeg_size} octets)…")
-
             if jpeg_size > 10_000_000:
-                self.error.emit(f"Taille invalide : {jpeg_size} octets.")
-                cdc.close()
+                self.capture_error.emit(f"Taille invalide : {jpeg_size} octets.")
                 return
 
-            cdc.timeout = 30
-            jpeg_data = cdc.read(jpeg_size)
+            ser.timeout = 30
+            jpeg_data = ser.read(jpeg_size)
             if len(jpeg_data) != jpeg_size:
-                self.error.emit("Données JPEG incomplètes.")
-                cdc.close()
+                self.capture_error.emit("Données JPEG incomplètes.")
                 return
 
-            # Lire exposition et gain
             exposure_us = 0
             gain_raw    = 0
-            exposure_bytes = cdc.read(4)
-            if len(exposure_bytes) == 4:
-                exposure_us = int.from_bytes(exposure_bytes, 'little')
-
-            gain_bytes = cdc.read(4)
-            if len(gain_bytes) == 4:
-                gain_raw = int.from_bytes(gain_bytes, 'little')
+            b = ser.read(4)
+            if len(b) == 4:
+                exposure_us = int.from_bytes(b, 'little')
+            b = ser.read(4)
+            if len(b) == 4:
+                gain_raw = int.from_bytes(b, 'little')
 
             gain_db     = gain_raw / 1000.0
             gain_linear = 10 ** (gain_db / 20)
             iso_approx  = int(100 * gain_linear)
 
-            cdc.close()
-
-            # Vérifier JPEG
             if jpeg_data[:2] != b'\xff\xd8':
-                self.error.emit("JPEG corrompu.")
+                self.capture_error.emit("JPEG corrompu.")
                 return
 
-            now = datetime.now()
             img_pil = Image.open(BytesIO(jpeg_data))
-
-            # Convertir en numpy pour affichage
-            img_np = np.array(img_pil.convert("RGB"), dtype=np.uint8)
-
+            img_np  = np.array(img_pil.convert("RGB"), dtype=np.uint8)
             desc = (f"exposition = {exposure_us} µs | gain = {gain_db:.1f} dB "
                     f"(≈ ISO {iso_approx})")
-            self.status.emit(f"Image reçue: {desc}")
             self.image_received.emit(img_np, desc)
 
-        except serial.SerialException as e:
-            self.error.emit(f"Erreur série : {e}")
         except Exception as e:
             import traceback; traceback.print_exc()
-            self.error.emit(f"Erreur : {e}")
-
-
-# =============================================================================
-#  Thread d'envoi de config UART
-# =============================================================================
-
-class SendConfigThread(QThread):
-    result = pyqtSignal(bool, str)   # success, message
-    status = pyqtSignal(str)
-
-    def __init__(self, port, cfg):
-        super().__init__()
-        self.port = port
-        self.cfg  = cfg
-
-    def run(self):
-        try:
-            cfg = self.cfg
-            data = struct.pack(
-                '<IHHHHHHHHBff',
-                MAGIC,
-                cfg['crop_v_start_pipe1'], cfg['crop_v_size_pipe1'],
-                cfg['crop_h_start_pipe1'], cfg['crop_h_size_pipe1'],
-                cfg['crop_v_start_pipe2'], cfg['crop_v_size_pipe2'],
-                cfg['crop_h_start_pipe2'], cfg['crop_h_size_pipe2'],
-                cfg['decimation_ratio_pipe2'],
-                cfg['downsize_ratio_pipe1'],
-                cfg['downsize_ratio_pipe2'],
-            )
-
-            ser = serial.Serial(self.port, UART_BAUDRATE, timeout=2)
-            time.sleep(0.5)
-            ser.reset_input_buffer()
-            ser.reset_output_buffer()
-
-            # 0) 'T' : régler la RTC du µC avec la date/heure courante
-            #    (6 octets : année-2000, mois, jour, heure, minute, seconde).
-            #    Doit être envoyé pendant que le µC est encore en mode config
-            #    (SEND_YUV_FRAME), donc AVANT le 'V'.
-            now = datetime.now()
-            tpayload = bytes([now.year - 2000, now.month, now.day,
-                              now.hour, now.minute, now.second])
-            ser.write(b'T' + tpayload)
-            ser.flush()
-            self.status.emit(
-                f"Date/heure envoyée : {now.strftime('%Y-%m-%d %H:%M:%S')}")
-            time.sleep(0.2)
-
-            # 1) 'V' : fait sortir le µC du mode capture (SEND_YUV_FRAME)
-            #    vers la réception de config (RECEIVE_PIPES_CONFIG)
-            ser.write(b'V')
-            ser.flush()
-            time.sleep(0.3)
-
-            # 2) La structure Config_t
-            ser.write(data)
-            ser.flush()
-
-            # 3) Attendre l'acquittement 'V' (le µC répond 'F' tant que la
-            #    config n'est pas validée)
-            timeout = time.time() + 5.0
-            while time.time() < timeout:
-                answer = ser.read(1)
-                if answer == b'V':
-                    ser.close()
-                    self.result.emit(True, "Config reçue et validée par le microcontrôleur.")
-                    return
-                elif answer == b'F':
-                    pass  # en attente côté µC
-            ser.close()
-            self.result.emit(False, "⚠  Pas de réponse du microcontrôleur (timeout).")
-
-        except serial.SerialException as e:
-            self.result.emit(False, f"Erreur série : {e}")
-        except Exception as e:
-            self.result.emit(False, f"Erreur : {e}")
+            self.capture_error.emit(f"Erreur : {e}")
+        finally:
+            ser.timeout = 0.2         # rétablit le timeout de lecture continue
 
 
 # =============================================================================
@@ -550,11 +509,9 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(STYLE)
 
         # État du flux de travail
-        self._last_image     = None    # numpy array
-        self._capture_thread = None
-        self._send_thread    = None
-        self._monitor        = None    # SerialMonitorThread
-        self._auto_port      = None    # port de la carte ST détectée
+        self._last_image = None    # numpy array
+        self._worker     = None    # SerialWorker (unique propriétaire du port)
+        self._auto_port  = None    # port de la carte ST détectée
 
         self._captured = False   # une capture a réussi
         self._tested   = False   # « Tester » pressé depuis la dernière capture
@@ -699,7 +656,7 @@ class MainWindow(QMainWindow):
         root.addWidget(left)
         root.addWidget(right, stretch=1)
 
-        self._log("Application démarrée — recherche de la carte ST (VID 0x0483)…")
+        self._log("Application started — searching for ST board (VID 0x0483)…")
 
     # ── Journal ───────────────────────────────────────────────────────────────
 
@@ -720,23 +677,23 @@ class MainWindow(QMainWindow):
     def _update_dt_label(self):
         self.dt_label.setText(datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
 
-    # ── Moniteur série (printf) ────────────────────────────────────────────────
+    # ── Worker série (unique propriétaire du port) ─────────────────────────────
 
-    def _start_monitor(self):
-        if self._monitor is not None or not self._auto_port:
+    def _start_worker(self):
+        if self._worker is not None or not self._auto_port:
             return
-        self._monitor = SerialMonitorThread(self._auto_port)
-        self._monitor.line_received.connect(self._log_stm)
-        self._monitor.start()
+        self._worker = SerialWorker(self._auto_port)
+        self._worker.line_received.connect(self._log_stm)
+        self._worker.image_received.connect(self._on_image_received)
+        self._worker.capture_error.connect(self._on_error)
+        self._worker.config_result.connect(self._on_send_result)
+        self._worker.status.connect(self._log)
+        self._worker.start()
 
-    def _stop_monitor(self):
-        if self._monitor is not None:
-            try:
-                self._monitor.line_received.disconnect()
-            except Exception:
-                pass
-            self._monitor.stop()
-            self._monitor = None
+    def _stop_worker(self):
+        if self._worker is not None:
+            self._worker.stop()
+            self._worker = None
 
     # ── Signaux ───────────────────────────────────────────────────────────────
 
@@ -761,7 +718,7 @@ class MainWindow(QMainWindow):
                 desc = st_port.description or "carte ST"
                 self.port_info.setText(f"✔ Connectée : {st_port.device}\n{desc}")
                 self.port_info.setStyleSheet("color: #2f7a2f; font-size: 10px;")
-                self._log(f"Carte ST détectée sur {st_port.device} ({desc}).")
+                self._log(f"STM32N6 detected ({desc}).")
                 # Nouvelle connexion : on repart d'un flux propre
                 self._captured = False
                 self._tested   = False
@@ -769,13 +726,13 @@ class MainWindow(QMainWindow):
                 self.display.clear_image()
                 self._last_image = None
                 self._update_buttons()
-                self._start_monitor()
+                self._start_worker()
         else:
             if self._auto_port is not None:
-                self._log("Carte ST déconnectée.")
-                self._stop_monitor()
+                self._log("STM32N6 disconnected.")
+                self._stop_worker()
             self._auto_port = None
-            self.port_info.setText("⌛ Recherche de la carte… (VID 0x0483)")
+            self.port_info.setText("Searching for STM32N6 board… (VID 0x0483)")
             self.port_info.setStyleSheet("color: #96702a; font-size: 10px;")
             self._update_buttons()
 
@@ -801,17 +758,12 @@ class MainWindow(QMainWindow):
     # ── Capture ───────────────────────────────────────────────────────────────
 
     def _do_capture(self):
-        port = self._get_port()
-        if not port: return
+        if self._worker is None:
+            self._log("⚠  Aucune carte ST détectée.")
+            return
         self._busy = True
         self._update_buttons()
-        self._stop_monitor()          # libère le port pour la capture
-        self._capture_thread = CaptureThread(port)
-        self._capture_thread.image_received.connect(self._on_image_received)
-        self._capture_thread.error.connect(self._on_error)
-        self._capture_thread.status.connect(self._log)
-        self._capture_thread.finished.connect(self._on_capture_finished)
-        self._capture_thread.start()
+        self._worker.request_capture()
 
     def _on_image_received(self, img_np, desc):
         self._last_image = img_np
@@ -820,11 +772,8 @@ class MainWindow(QMainWindow):
         size = (self.display.width(), self.display.height())
         pix = make_raw_pixmap(img_np, size)
         self.display.set_pixmap(pix)
-
-    def _on_capture_finished(self):
         self._busy = False
         self._update_buttons()
-        self._start_monitor()         # reprend l'écoute des printf
 
     # ── Tester la config (local) ──────────────────────────────────────────────
 
@@ -854,19 +803,25 @@ class MainWindow(QMainWindow):
     # ── Envoyer la config ─────────────────────────────────────────────────────
 
     def _do_send(self):
-        port = self._get_port()
-        if not port: return
+        if self._worker is None:
+            self._log("⚠  Aucune carte ST détectée.")
+            return
         cfg = self._read_config()
         if cfg is None: return
+        data = struct.pack(
+            '<IHHHHHHHHBff',
+            MAGIC,
+            cfg['crop_v_start_pipe1'], cfg['crop_v_size_pipe1'],
+            cfg['crop_h_start_pipe1'], cfg['crop_h_size_pipe1'],
+            cfg['crop_v_start_pipe2'], cfg['crop_v_size_pipe2'],
+            cfg['crop_h_start_pipe2'], cfg['crop_h_size_pipe2'],
+            cfg['decimation_ratio_pipe2'],
+            cfg['downsize_ratio_pipe1'],
+            cfg['downsize_ratio_pipe2'],
+        )
         self._busy = True
         self._update_buttons()
-        self._stop_monitor()          # libère le port pour l'envoi
-        self._log("Envoi de la configuration…")
-        self._send_thread = SendConfigThread(port, cfg)
-        self._send_thread.result.connect(self._on_send_result)
-        self._send_thread.status.connect(self._log)
-        self._send_thread.finished.connect(self._on_send_finished)
-        self._send_thread.start()
+        self._worker.request_config(data)
 
     def _on_send_result(self, success, msg):
         self._log(msg)
@@ -875,11 +830,8 @@ class MainWindow(QMainWindow):
             self._sent = True
             self.display.clear_image()
             self._last_image = None
-
-    def _on_send_finished(self):
         self._busy = False
         self._update_buttons()
-        self._start_monitor()         # continue d'écouter (logs d'enregistrement)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -992,10 +944,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         self._poll_timer.stop()
         self._dt_timer.stop()
-        self._stop_monitor()
-        for t in (self._capture_thread, self._send_thread):
-            if t and t.isRunning():
-                t.wait(2000)
+        self._stop_worker()
         event.accept()
 
 
