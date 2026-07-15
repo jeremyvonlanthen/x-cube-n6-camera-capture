@@ -16,7 +16,7 @@ C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:158:14:mp4
 ../../../Lib/minimp4/minimp4.h:956:12:write_pending_data	5
 ../../../Lib/minimp4/minimp4.h:884:12:append_mem	5
 ../../../Lib/minimp4/minimp4.h:2201:23:find_start_code	9
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:307:12:rec_write_jpeg_file	6
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:312:12:rec_write_jpeg_file	4
 C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:187:12:mp4_write_cb	5
 ../../../Lib/minimp4/minimp4.h:1811:13:flush_bits	2
 ../../../Lib/minimp4/minimp4.h:1201:12:mp4e_flush_index	56
@@ -29,7 +29,7 @@ C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:187:12:mp4
 ../../../Lib/minimp4/minimp4.h:1110:5:MP4E_put_sample	19
 ../../../Lib/minimp4/minimp4.h:1186:5:MP4E_set_text_comment	3
 ../../../Lib/minimp4/minimp4.h:1754:5:MP4E_close	4
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:340:13:rec_task_fct	25
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:342:13:rec_task_fct	25
 ../../../Lib/minimp4/minimp4.h:2244:5:mp4_h26x_write_init	1
 ../../../Lib/minimp4/minimp4.h:2271:6:mp4_h26x_write_close	1
 ../../../Lib/minimp4/minimp4.h:2336:5:mp4_h26x_write_nal	33
@@ -38,8 +38,8 @@ C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:340:13:rec
 ../../../Lib/minimp4/minimp4.h:2562:5:MP4D_open	177
 ../../../Lib/minimp4/minimp4.h:3370:13:MP4D_read_sps	1
 ../../../Lib/minimp4/minimp4.h:3375:13:MP4D_read_pps	1
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:388:5:REC_Init	4
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:431:5:REC_Start	9
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:502:5:REC_PushFrame	8
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:560:5:REC_Stop	2
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:582:5:REC_SaveJpeg	4
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:390:5:REC_Init	4
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:433:5:REC_Start	9
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:506:5:REC_PushFrame	8
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:564:5:REC_Stop	2
+C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_rec.c:586:5:REC_SaveJpeg	6

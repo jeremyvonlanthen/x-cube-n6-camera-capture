@@ -303,23 +303,25 @@ static int rec_write_access_unit(const uint8_t *p_data, uint32_t len, uint32_t d
   return 0;
 }
 
-/* Writes p_data to a new IMG_xxxx.JPG file (SD writer task context). */
+/* Filename for the next JPEG, set by REC_SaveJpeg and consumed by the SD
+ * writer task in rec_write_jpeg_file (JPEG saving is sequential and blocks the
+ * caller, so a single shared buffer is safe). */
+static char rec_jpeg_fname[40] = "IMG_0001.JPG";
+
+/* Writes p_data to the file named rec_jpeg_fname (SD writer task context). */
 static int rec_write_jpeg_file(const uint8_t *p_data, uint32_t len)
 {
-  FRESULT res = FR_NO_FILE;
+  FRESULT res;
   FIL jf;
   UINT bw = 0;
-  char fname[16];
-  int i;
+  char fname[40];
 
-  for (i = 1; i <= 9999; i++) {
-    snprintf(fname, sizeof(fname), "IMG_%04d.JPG", i);
-    res = f_open(&jf, fname, FA_WRITE | FA_CREATE_NEW);
-    if (res != FR_EXIST)
-      break;
-  }
+  strncpy(fname, rec_jpeg_fname, sizeof(fname) - 1);
+  fname[sizeof(fname) - 1] = '\0';
+
+  res = f_open(&jf, fname, FA_WRITE | FA_CREATE_NEW);
   if (res != FR_OK) {
-    printf("[REC] jpeg f_open failed (%d)\r\n", res);
+    printf("[REC] jpeg f_open('%s') failed (%d)\r\n", fname, res);
     return -1;
   }
 
@@ -428,12 +430,12 @@ int REC_Init(void)
   return 0;
 }
 
-int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_size)
+int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_size,
+              const char *fname)
 {
   MP4E_track_t track = { 0 };
-  FRESULT res = FR_NO_FILE;
-  char fname[16];
-  int i;
+  FRESULT res;
+  char name[40];
 
   if (rec_active || ring_buf == NULL || ring_size < 2u * REC_MAX_FRAME)
     return -1;
@@ -455,18 +457,20 @@ int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_siz
   ring_head = 0;
   ring_free = rec_ring_size;
 
-  /* Find a free 8.3 filename: VID_0001.MP4 ... */
-  for (i = 1; i <= 9999; i++) {
-    snprintf(fname, sizeof(fname), "VID_%04d.MP4", i);
-    res = f_open(&fil, fname, FA_WRITE | FA_CREATE_NEW);
-    if (res != FR_EXIST)
-      break;
+  /* Use the caller-provided filename (timestamp), or a default fallback. */
+  if (fname != NULL && fname[0] != '\0') {
+    strncpy(name, fname, sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
+  } else {
+    strncpy(name, "VID_0001.MP4", sizeof(name) - 1);
+    name[sizeof(name) - 1] = '\0';
   }
+  res = f_open(&fil, name, FA_WRITE | FA_CREATE_NEW);
   if (res != FR_OK) {
-    printf("[REC] f_open failed (%d)\r\n", res);
+    printf("[REC] f_open('%s') failed (%d)\r\n", name, res);
     return -1;
   }
-  printf("[REC] recording to %s\r\n", fname);
+  printf("[REC] recording to %s\r\n", name);
 
   /* Note: no f_expand() preallocation here — scanning the FAT of a large
    * card takes several hundred ms (startup delay), and the large PSRAM
@@ -579,12 +583,19 @@ int REC_Stop(void)
   return rec_error ? -1 : 0;
 }
 
-int REC_SaveJpeg(const uint8_t *p_data, size_t len)
+int REC_SaveJpeg(const uint8_t *p_data, size_t len, const char *fname)
 {
   rec_msg_t msg;
 
   if (rec_active || p_data == NULL || len == 0)
     return -1;
+
+  /* Store the target filename for the SD writer task (rec_write_jpeg_file).
+   * Fall back to a default if none was provided. */
+  if (fname != NULL && fname[0] != '\0') {
+    strncpy(rec_jpeg_fname, fname, sizeof(rec_jpeg_fname) - 1);
+    rec_jpeg_fname[sizeof(rec_jpeg_fname) - 1] = '\0';
+  }
 
   msg.type     = REC_MSG_JPEG;
   msg.offset   = 0;

@@ -19,6 +19,7 @@ C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_pwr
 C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_pwr_ex.c
 C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc.c
 C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc_ex.c
+C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc.c
 C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_xspi.c
 C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_bsec.c
 C_SOURCES_FW += $(FW_REL_DIR)/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_uart.c

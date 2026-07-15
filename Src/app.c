@@ -142,7 +142,7 @@ static uint8_t h264_venc_out[H264_VENC_OUT_SIZE] ALIGN_32 IN_PSRAM;
  * pipe configuration (hence the frame size) is known */
 static uint8_t *buffer_pipe1_capture = NULL;
 static uint8_t *buffer_pipe2_capture = NULL;
-static uint8_t *buffer_pipe2_warmup = NULL;
+static uint8_t *buffer_warmup = NULL;
 static uint32_t size_pipe1 = 0;
 static uint32_t size_pipe2 = 0;
 
@@ -159,7 +159,6 @@ static volatile int frame_ready = 0;
 static volatile int warmup_frames = 0;
 static volatile int warmup_done = 0;
 static volatile int uart_busy = 0;        /* 1 = UART used for binary data, printf muted */
-static volatile int camera_initialized = 0;
 
 /* H264 recording state */
 static volatile int h264_streaming = 0;   /* capture->encode pipeline active */
@@ -172,8 +171,10 @@ static uint8_t * volatile h264_ready_buf = NULL;
 /* Total frame events seen (diagnostics: events - frames = missed frames) */
 static volatile uint32_t h264_frame_events = 0;
 
-/* DIAS state machine */
-state_t state = SD_CARD;
+/* RTC (clocked on the internal LSI) used to build timestamped file names.
+ * The wall-clock value is set by the Python GUI over UART (command 'T'). */
+static RTC_HandleTypeDef hrtc;
+static volatile int rtc_ready = 0;   /* 1 once HAL_RTC_Init succeeded */
 
 /* ==========================================================================
  * Console & memory helpers
@@ -212,6 +213,110 @@ static void *axisram_alloc(uint32_t size)
 }
 
 /* ==========================================================================
+ * RTC (timestamped file names)
+ * ========================================================================== */
+
+/* Initializes the RTC on the internal LSI (~32 kHz: no external crystal
+ * required).  Non-fatal: on any failure rtc_ready stays 0 and the timestamp
+ * helper falls back to a HAL_GetTick-based name.  The actual date/time must be
+ * pushed by the GUI (command 'T'); until then the calendar counts from its
+ * power-on default. */
+static void rtc_init(void)
+{
+  RCC_OscInitTypeDef osc = { 0 };
+  RCC_PeriphCLKInitTypeDef pclk = { 0 };
+
+  HAL_PWR_EnableBkUpAccess();
+
+  /* Enable LSI (leave the PLLs untouched) */
+  osc.OscillatorType = RCC_OSCILLATORTYPE_LSI;
+  osc.LSIState       = RCC_LSI_ON;
+  osc.PLL1.PLLState  = RCC_PLL_NONE;
+  osc.PLL2.PLLState  = RCC_PLL_NONE;
+  osc.PLL3.PLLState  = RCC_PLL_NONE;
+  osc.PLL4.PLLState  = RCC_PLL_NONE;
+  if (HAL_RCC_OscConfig(&osc) != HAL_OK) {
+    printf("[RTC] LSI enable failed\r\n");
+    return;
+  }
+
+  /* Route LSI to the RTC */
+  pclk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
+  pclk.RTCClockSelection    = RCC_RTCCLKSOURCE_LSI;
+  if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK) {
+    printf("[RTC] clock select failed\r\n");
+    return;
+  }
+
+  __HAL_RCC_RTC_ENABLE();
+  __HAL_RCC_RTCAPB_CLK_ENABLE();
+
+  /* LSI ~32 kHz -> (127+1) * (249+1) = 32000 for a 1 Hz calendar tick */
+  hrtc.Instance            = RTC;
+  hrtc.Init.HourFormat     = RTC_HOURFORMAT_24;
+  hrtc.Init.AsynchPrediv   = 127;
+  hrtc.Init.SynchPrediv    = 249;
+  hrtc.Init.OutPut         = RTC_OUTPUT_DISABLE;
+  hrtc.Init.OutPutRemap    = RTC_OUTPUT_REMAP_NONE;
+  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
+  hrtc.Init.OutPutType     = RTC_OUTPUT_TYPE_OPENDRAIN;
+  hrtc.Init.OutPutPullUp   = RTC_OUTPUT_PULLUP_NONE;
+  hrtc.Init.BinMode        = RTC_BINARY_NONE;
+  if (HAL_RTC_Init(&hrtc) != HAL_OK) {
+    printf("[RTC] HAL_RTC_Init failed\r\n");
+    return;
+  }
+
+  rtc_ready = 1;
+  printf("[RTC] initialized on LSI\r\n");
+}
+
+/* Sets the RTC calendar from a 6-byte payload (year-2000, month, day, hour,
+ * minute, second) received from the GUI. */
+static void rtc_set_datetime(const uint8_t dt[6])
+{
+  RTC_TimeTypeDef t = { 0 };
+  RTC_DateTypeDef d = { 0 };
+
+  if (!rtc_ready)
+    return;
+
+  d.Year    = dt[0];             /* years since 2000 */
+  d.Month   = dt[1];             /* 1..12 */
+  d.Date    = dt[2];             /* 1..31 */
+  d.WeekDay = RTC_WEEKDAY_MONDAY; /* unused for naming */
+  t.Hours   = dt[3];
+  t.Minutes = dt[4];
+  t.Seconds = dt[5];
+
+  HAL_RTC_SetTime(&hrtc, &t, RTC_FORMAT_BIN);
+  HAL_RTC_SetDate(&hrtc, &d, RTC_FORMAT_BIN);
+  printf("[RTC] set to 20%02u-%02u-%02u %02u:%02u:%02u\r\n",
+         dt[0], dt[1], dt[2], dt[3], dt[4], dt[5]);
+}
+
+/* Writes a file-name-safe timestamp "AAAA-MM-JJ_HH-MM-SS" into buf (needs >= 20
+ * bytes).  ':' is illegal in FAT names so it is replaced by '-', and the
+ * space by '_'.  Falls back to a tick-based name if the RTC is not ready. */
+static void rtc_make_timestamp(char *buf, size_t n)
+{
+  RTC_TimeTypeDef t = { 0 };
+  RTC_DateTypeDef d = { 0 };
+
+  if (!rtc_ready) {
+    snprintf(buf, n, "REC_%08lu", (unsigned long)HAL_GetTick());
+    return;
+  }
+
+  /* GetTime MUST be called before GetDate to unlock the shadow registers */
+  HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
+  HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN);
+
+  snprintf(buf, n, "%04u-%02u-%02u_%02u-%02u-%02u",
+           2000 + d.Year, d.Month, d.Date, t.Hours, t.Minutes, t.Seconds);
+}
+
+/* ==========================================================================
  * UART transfer helpers (protocol with the Python GUI)
  * ========================================================================== */
 
@@ -219,6 +324,8 @@ static void *axisram_alloc(uint32_t size)
  *   0xAA | length (4 B, little endian) | JPEG data | exposure (4 B) | gain (4 B) */
 static void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
 {
+	uart_busy = 1;
+
   uint8_t sync = 0xAA;
   uint8_t size_buf[4];
   const uint8_t *src = jpeg;
@@ -249,6 +356,8 @@ static void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
 
   CMW_CAMERA_GetGain(&gain);
   HAL_UART_Transmit(&huart1, (uint8_t *)&gain, sizeof(gain), HAL_MAX_DELAY);
+
+  uart_busy = 1;
 }
 
 /* ==========================================================================
@@ -260,6 +369,8 @@ static void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
  * frames before stopping the pipe(s). */
 static void camera_warmup(uint32_t output_format)
 {
+	static int camera_initialized = 0;
+
   CAM_conf_t cam_conf = { 0 };
   uint8_t two_pipes = (output_format == DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
@@ -279,7 +390,7 @@ static void camera_warmup(uint32_t output_format)
   warmup_done = 0;
   warmup_frames = 0;
 
-  CAM_CapturePipe_Start(buffer_full_frame, buffer_pipe2_warmup, CMW_MODE_CONTINUOUS, 0);
+  CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_CONTINUOUS, 0);
 
   while (warmup_frames < WARMUP_FRAMES_TARGET)
     vTaskDelay(pdMS_TO_TICKS(10));
@@ -300,7 +411,7 @@ static int capture_yuv(void)
 {
   snapshot_in_progress = 1;
   frame_ready = 0;
-  CAM_CapturePipe_Start(buffer_full_frame, buffer_pipe2_warmup, CMW_MODE_SNAPSHOT, 0);
+  CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
 
   uint32_t start = HAL_GetTick();
   while (!frame_ready) {
@@ -440,12 +551,13 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
  * configuration), encodes it to JPEG (hardware) and saves it to the SD
  * card as IMG_xxxx.JPG through the FreeRTOS SD writer task (app_rec.c).
  * Called on the TAMP button, right before record_h264_sd(). */
-static void record_jpeg_sd(void)
+static void record_jpeg_sd(const char *timestamp)
 {
+  char fname[40];
   int jpeg_len;
   uint32_t start;
 
-  uart_busy = 0;
+  snprintf(fname, sizeof(fname), "%s.JPG", timestamp);
 
   /* Full-sensor COLOR snapshot while the camera runs in detect (mono,
    * cropped/downsized) mode: reconfigure PIPE1 ONLY to full-frame YUV422.
@@ -459,7 +571,7 @@ static void record_jpeg_sd(void)
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
   snapshot_in_progress = 1;
   frame_ready = 0;
-  CAM_CapturePipe_Start(buffer_full_frame, buffer_pipe2_warmup, CMW_MODE_SNAPSHOT, 0);
+  CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
 
   start = HAL_GetTick();
   while (!frame_ready) {
@@ -491,14 +603,14 @@ static void record_jpeg_sd(void)
   }
 
   /* Written by the SD writer task (FreeRTOS); blocks until file closed */
-  if (REC_SaveJpeg(hires_jpeg_buffer, (size_t)jpeg_len) != 0)
+  if (REC_SaveJpeg(hires_jpeg_buffer, (size_t)jpeg_len, fname) != 0)
     printf("[REC] snapshot save FAILED\r\n");
 }
 
 /* Records H264_RECORD_SECONDS seconds of 1280x720@30 H264 video into a new
  * VID_xxxx.MP4 on the SD card, then restores the camera state (clears
  * warmup_done so the current mode re-enters from scratch). */
-static void record_h264_sd(void)
+static void record_h264_sd(const char *timestamp)
 {
   /* LL_VENC_Init and ENC_Init must each be called exactly once —
    * ENC_DeInit crashes on this target.  Init once on first entry,
@@ -507,8 +619,10 @@ static void record_h264_sd(void)
 
   CAM_conf_t cam_conf = { 0 };
   ENC_Conf_t enc_conf;
+  char fname[40];
 
-  uart_busy = 0;  /* re-enable printf (send_pipes sets uart_busy=1 permanently) */
+  snprintf(fname, sizeof(fname), "%s.MP4", timestamp);
+
   printf("[REC] record_h264_sd entry hw_init=%d\r\n", hw_initialized);
 
   /* Switch camera to 1280x720 RGB565 @ 30 fps for H264.
@@ -556,7 +670,8 @@ static void record_h264_sd(void)
    * of encoded video, absorbing long SD card pauses without dropping. */
   if (REC_Start(H264_WIDTH, H264_HEIGHT, H264_FPS,
                 buffer_full_frame + 2 * H264_FRAME_BYTES,
-                MAX_CAPTURE_FRAME_SIZE - 2 * H264_FRAME_BYTES) != 0) {
+                MAX_CAPTURE_FRAME_SIZE - 2 * H264_FRAME_BYTES,
+                fname) != 0) {
     printf("[REC] REC_Start failed, recording aborted\r\n");
     warmup_done = 0;
     return;
@@ -737,11 +852,17 @@ uint8_t check_SD(void)
 
 void app_run(void)
 {
+	/* DIAS state machine (local: not shared with any ISR/callback) */
+	state_t state = SD_CARD;
+
 	BSP_LED_Off(LED_GREEN);
 	BSP_LED_Off(LED_RED);
 
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
+
+	/* RTC for timestamped file names (non-fatal if it fails) */
+	rtc_init();
 
 	while(1)
 	{
@@ -771,10 +892,15 @@ void app_run(void)
 			HAL_UART_Receive(&huart1, &cmd, 1, 100);
 
 			if (cmd == 'S'){
-				uart_busy = 1;
 				int jpeg_len = capture_yuv();
 				send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
-				uart_busy = 0;
+			}
+			else if (cmd == 'T'){
+				/* Set RTC date/time: 6 bytes (year-2000, month, day,
+				 * hour, minute, second) sent right after the 'T'. */
+				uint8_t dt[6] = { 0 };
+				if (HAL_UART_Receive(&huart1, dt, sizeof(dt), 1000) == HAL_OK)
+					rtc_set_datetime(dt);
 			}
 			else if(cmd == 'V'){
 				state = RECEIVE_PIPES_CONFIG;
@@ -821,8 +947,13 @@ void app_run(void)
 			break;
 
 		case RECORDING:
-			record_jpeg_sd();
-			record_h264_sd();
+			/* One timestamp for this event, shared by the JPEG and the MP4 so
+			 * both files carry the same "AAAA-MM-JJ_HH-MM-SS" base name. */
+			char timestamp[20];
+			rtc_make_timestamp(timestamp, sizeof(timestamp));
+
+			record_jpeg_sd(timestamp);
+			record_h264_sd(timestamp);
 			BSP_LED_Off(LED_GREEN);
 
 			/* record_h264_sd() left the camera in 720p RGB565 and cleared

@@ -24,7 +24,8 @@ int REC_Init(void);
  * frames between the encoder task and the SD writer task (absorbs SD
  * write-latency pauses; bigger = fewer dropped frames).
  * Returns 0 on success. */
-int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_size);
+int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_size,
+              const char *fname);
 
 /* Queues one encoded H264 access unit (Annex-B, as produced by
  * ENC_EncodeFrame) for writing.  Copies the data into an internal PSRAM
@@ -42,6 +43,6 @@ int REC_Stop(void);
  * card.  The write is performed by the SD writer task (FreeRTOS); this
  * call blocks until the file is closed.  Must not be called while a video
  * recording is active.  Returns 0 on success. */
-int REC_SaveJpeg(const uint8_t *p_data, size_t len);
+int REC_SaveJpeg(const uint8_t *p_data, size_t len, const char *fname);
 
 #endif /* APP_REC_H */

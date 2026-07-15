@@ -192,6 +192,11 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Lib/FatFs/ff.c</locationURI>
 		</link>
 		<link>
+			<name>Lib/FatFs/ffunicode.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Lib/FatFs/ffunicode.c</locationURI>
+		</link>
+		<link>
 			<name>STM32Cube_FW_N6/Drivers/BSP/STM32N6570-DK/stm32n6570_discovery_sd.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/STM32Cube_FW_N6/Drivers/BSP/STM32N6570-DK/stm32n6570_discovery_sd.c</locationURI>
@@ -390,6 +395,11 @@
 			<name>STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc.c</locationURI>
+		</link>
+		<link>
+			<name>STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rtc.c</locationURI>
 		</link>
 		<link>
 			<name>STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_rcc_ex.c</name>
