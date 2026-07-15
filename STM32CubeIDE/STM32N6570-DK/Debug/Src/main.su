@@ -1,8 +1,0 @@
-../../../STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Inc/stm32n6xx_ll_bus.h:679:22:LL_MEM_EnableClock	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:160:13:SystemClock_Config	632	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:309:13:main_thread_fct	136	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:70:5:main	56	static,ignoring_inline_asm
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:153:6:IAC_IRQHandler	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:394:19:MX_DCMIPP_ClockConfig	408	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:426:6:assert_failed	0	static,ignoring_inline_asm
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/main.c:438:45:app_clean_invalidate_dbg	16	static,ignoring_inline_asm

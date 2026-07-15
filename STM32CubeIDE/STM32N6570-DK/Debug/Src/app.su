@@ -1,8 +1,0 @@
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:366:13:camera_warmup	48	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:194:14:axisram_alloc	16	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:183:5:__io_putchar	16	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:798:5:CMW_CAMERA_PIPE_FrameEventCallback	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:816:5:CMW_CAMERA_PIPE_VsyncEventCallback	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:824:6:BSP_PB_Callback	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:837:9:check_SD	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app.c:852:6:app_run	688	static,ignoring_inline_asm

@@ -1,7 +1,0 @@
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:49:12:H264EncSetFilter	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:78:12:H264EncGetFilter	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:89:12:H264EncSetChromaQpIndexOffset	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:111:12:H264EncSetHwBurstSize	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:124:12:H264EncSetHwBurstType	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:136:12:H264EncTestInputLineBuf	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/STM32Cube_FW_N6/Middlewares/Third_Party/VideoEncoder/source/h264/h264encapi_ext.c:147:12:H264EncTestCropping	8	static

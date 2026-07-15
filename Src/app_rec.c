@@ -130,9 +130,6 @@ static volatile int rec_active;
 
 static volatile int jpeg_result;  /* REC_MSG_JPEG outcome (SD task -> caller) */
 
-static uint32_t stat_frames_written;
-static uint32_t stat_frames_dropped;
-static uint32_t stat_bytes_written;
 
 /* ------------------------------------------------------------------------ */
 /* minimp4 pool allocator: bump allocator with realloc-copy semantics.       */
@@ -202,7 +199,6 @@ static int mp4_write_cb(int64_t offset, const void *buffer, size_t size, void *t
     printf("[REC] f_write err=%d bw=%u/%u\r\n", res, bw, (unsigned)size);
     return 1;
   }
-  stat_bytes_written += (uint32_t)size;
   return 0;
 }
 
@@ -299,7 +295,6 @@ static int rec_write_access_unit(const uint8_t *p_data, uint32_t len, uint32_t d
     printf("[REC] MP4E_put_sample err=%d\r\n", err);
     return -1;
   }
-  stat_frames_written++;
   return 0;
 }
 
@@ -307,6 +302,8 @@ static int rec_write_access_unit(const uint8_t *p_data, uint32_t len, uint32_t d
  * writer task in rec_write_jpeg_file (JPEG saving is sequential and blocks the
  * caller, so a single shared buffer is safe). */
 static char rec_jpeg_fname[40] = "IMG_0001.JPG";
+/* File name of the recording currently open, logged when it is finalized */
+static char rec_mp4_fname[40]  = "VID_0001.MP4";
 
 /* Writes p_data to the file named rec_jpeg_fname (SD writer task context). */
 static int rec_write_jpeg_file(const uint8_t *p_data, uint32_t len)
@@ -332,7 +329,7 @@ static int rec_write_jpeg_file(const uint8_t *p_data, uint32_t len)
     return -1;
   }
 
-  printf("[REC] snapshot saved to %s (%lu bytes)\r\n", fname, (unsigned long)len);
+  printf("[REC] snapshot saved to %s (%lu KB)\r\n", fname, (unsigned long)len / 1024);
   return 0;
 }
 
@@ -373,12 +370,9 @@ static void rec_task_fct(void *arg)
         mux = NULL;
       }
       f_truncate(&fil);  /* drop the f_expand preallocation tail */
+      printf("[REC] video saved to %s (%lu MB)\r\n",
+             rec_mp4_fname, (unsigned long)f_size(&fil) / (1024 * 1024));
       f_close(&fil);
-      printf("[REC] closed: frames=%lu dropped=%lu bytes=%lu poolPeak=%u err=%d\r\n",
-             (unsigned long)stat_frames_written,
-             (unsigned long)stat_frames_dropped,
-             (unsigned long)stat_bytes_written,
-             (unsigned)mp4_pool_peak, rec_error);
       xSemaphoreGive(sem_stopped);
     }
   }
@@ -399,25 +393,17 @@ int REC_Init(void)
   clk.Sdmmc2ClockSelection = RCC_SDMMC2CLKSOURCE_IC4;
   clk.ICSelection[RCC_IC4].ClockSelection = RCC_ICCLKSOURCE_PLL1;
   clk.ICSelection[RCC_IC4].ClockDivider = 4;
-  if (HAL_RCCEx_PeriphCLKConfig(&clk) != HAL_OK) {
-    printf("[REC] SDMMC2 clock config failed\r\n");
-    return -1;
-  }
+  if (HAL_RCCEx_PeriphCLKConfig(&clk) != HAL_OK) return -3;
 
   /* BSP SD init (SDMMC2, 4-bit, high speed).  Handles RIF config itself. */
   ret = BSP_SD_Init(0);
-  if (ret != BSP_ERROR_NONE) {
-    printf("[REC] BSP_SD_Init failed (%d) - card inserted?\r\n", ret);
-    return -1;
-  }
+  if (ret != BSP_ERROR_NONE) return -2;
 
   /* Mount the FAT32 volume (immediate mount to fail early) */
   res = f_mount(&fs, "", 1);
-  if (res != FR_OK) {
-    printf("[REC] f_mount failed (%d) - card FAT32-formatted?\r\n", res);
-    return -1;
-  }
-  printf("[REC] SD mounted (FAT type %d)\r\n", fs.fs_type);
+  if (res != FR_OK) return -1;
+
+  printf("[uSD] uSD mounted (FAT type %d)\r\n", fs.fs_type);
 
   /* FreeRTOS objects */
   q_filled = xQueueCreateStatic(REC_MSG_NB, sizeof(rec_msg_t),
@@ -447,9 +433,6 @@ int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_siz
   sps_done = 0;
   pps_done = 0;
   rec_error = 0;
-  stat_frames_written = 0;
-  stat_frames_dropped = 0;
-  stat_bytes_written = 0;
   frame_duration = MP4_TIMESCALE / (unsigned)fps;
 
   /* Ring is empty here: the previous recording (if any) was fully drained
@@ -470,7 +453,9 @@ int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_siz
     printf("[REC] f_open('%s') failed (%d)\r\n", name, res);
     return -1;
   }
-  printf("[REC] recording to %s\r\n", name);
+  /* Remember the name so REC_Stop can log it once the file is finalized */
+  strncpy(rec_mp4_fname, name, sizeof(rec_mp4_fname) - 1);
+  rec_mp4_fname[sizeof(rec_mp4_fname) - 1] = '\0';
 
   /* Note: no f_expand() preallocation here — scanning the FAT of a large
    * card takes several hundred ms (startup delay), and the large PSRAM
@@ -514,7 +499,6 @@ int REC_PushFrame(const uint8_t *p_data, size_t len, uint32_t duration_90k)
 
   if (len > REC_MAX_FRAME) {
     printf("[REC] frame too big (%u), dropped\r\n", (unsigned)len);
-    stat_frames_dropped++;
     return -1;
   }
 
@@ -528,8 +512,6 @@ int REC_PushFrame(const uint8_t *p_data, size_t len, uint32_t duration_90k)
   taskENTER_CRITICAL();
   if (ring_free < need) {
     taskEXIT_CRITICAL();
-    /* SD writer can't keep up: drop the frame (caller forces IDR next) */
-    stat_frames_dropped++;
     return -1;
   }
   ring_free -= need;
@@ -554,7 +536,6 @@ int REC_PushFrame(const uint8_t *p_data, size_t len, uint32_t duration_90k)
     ring_free += need;
     taskEXIT_CRITICAL();
     ring_head = (waste > 0) ? rec_ring_size - waste : ring_head - len;
-    stat_frames_dropped++;
     return -1;
   }
 

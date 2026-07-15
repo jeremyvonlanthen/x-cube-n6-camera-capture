@@ -122,16 +122,7 @@ static int VENC_EncodeStart(struct VENC_Context *p_ctx, uint8_t *p_out, size_t o
   enc_in.pOutBuf = (u32 *) p_out;
   enc_in.busOutBuf = (ptr_t) p_out;
   enc_in.outBufSize = out_len;
-  static int diag_done = 0;
-  if (!diag_done)
-    printf("[STRMSTART] hdl=%p pOutBuf=%p outBufSize=%u status=%u\r\n",
-           (void *)p_ctx->hdl, (void *)p_out, (unsigned)out_len,
-           p_ctx->hdl ? *(const u32 *)p_ctx->hdl : 0u);
   ret = H264EncStrmStart(p_ctx->hdl, &enc_in, &enc_out);
-  if (!diag_done) {
-    printf("[STRMSTART] ret=%d streamSize=%u\r\n", ret, (unsigned)enc_out.streamSize);
-    diag_done = 1;
-  }
   if (ret)
     return ret;
 
@@ -168,17 +159,6 @@ static int VENC_EncodeFrame(struct VENC_Context *p_ctx, uint8_t *p_in, uint8_t *
   enc_in.sendAUD = 0;
 
   ret = H264EncStrmEncode(p_ctx->hdl, &enc_in, &enc_out, NULL, NULL, NULL);
-  {
-    static int enc_diag = 0;
-    if (enc_diag < 3) {
-      printf("[STRMENCODE] ret=%d (want %d) busLuma=%08lx pOut=%08lx sz=%u\r\n",
-             ret, H264ENC_FRAME_READY,
-             (unsigned long)enc_in.busLuma,
-             (unsigned long)enc_in.busOutBuf,
-             (unsigned)enc_out.streamSize);
-      enc_diag++;
-    }
-  }
   if (ret != H264ENC_FRAME_READY)
     return -1;
 
@@ -236,8 +216,6 @@ void ENC_Init(ENC_Conf_t *p_conf)
   config.refFrameAmount = 1;
   ret = H264EncInit(&config, &p_ctx->hdl);
   assert(ret == H264ENC_OK);
-  printf("[ENC_INIT] hdl=%p ewl_heap_used=%u\r\n",
-         (void *)p_ctx->hdl, (unsigned)ewl_heap_used);
 
   /* setup source format */
   ret = H264EncGetPreProcessing(p_ctx->hdl, &cfg);
@@ -317,8 +295,6 @@ int ENC_EndSession(uint8_t *p_out, size_t out_len)
   enc_in.outBufSize = (u32)   out_len;
 
   ret = H264EncStrmEnd(p_ctx->hdl, &enc_in, &enc_out);
-  printf("[ENC] ENC_EndSession ret=%d eos_bytes=%u\r\n",
-         ret, (unsigned)enc_out.streamSize);
 
   if (ret == H264ENC_OK) {
     p_ctx->is_sps_pps_done = 0;

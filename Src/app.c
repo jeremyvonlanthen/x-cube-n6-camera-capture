@@ -132,6 +132,9 @@ extern volatile uint32_t dcmipp_err_count;
 /* Configuration received from the Python GUI */
 static Config_t config_py = { 0 };
 
+/* DIAS state machine (local: not shared with any ISR/callback) */
+state_t state = SD_CARD;
+
 /* Capture buffers (PSRAM) */
 static uint8_t buffer_full_frame[MAX_CAPTURE_FRAME_SIZE] ALIGN_32 IN_PSRAM;
 static uint8_t hires_jpeg_buffer[MAX_JPEG_FRAME_SIZE] ALIGN_32 IN_PSRAM;
@@ -168,8 +171,6 @@ static volatile int force_intra = 0;
  * (read from the P1STM0AR status register in the frame event callback,
  * same pattern as the ST VENC_SDCard example). */
 static uint8_t * volatile h264_ready_buf = NULL;
-/* Total frame events seen (diagnostics: events - frames = missed frames) */
-static volatile uint32_t h264_frame_events = 0;
 
 /* RTC (clocked on the internal LSI) used to build timestamped file names.
  * The wall-clock value is set by the Python GUI over UART (command 'T'). */
@@ -357,7 +358,7 @@ static void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
   CMW_CAMERA_GetGain(&gain);
   HAL_UART_Transmit(&huart1, (uint8_t *)&gain, sizeof(gain), HAL_MAX_DELAY);
 
-  uart_busy = 1;
+  uart_busy = 0;
 }
 
 /* ==========================================================================
@@ -534,10 +535,6 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
   res = ENC_EncodeFrame(p_frame, h264_venc_out, H264_VENC_OUT_SIZE, is_intra_force);
   enc_call_count++;
 
-  /* Log first 3 calls and then every 30 */
-  if (enc_call_count <= 3 || enc_call_count % 30 == 0)
-    printf("[ENC] call#%d res=%d\r\n", enc_call_count, (int)res);
-
   if ((int)res <= 0)
     return 0;
 
@@ -557,7 +554,7 @@ static void record_jpeg_sd(const char *timestamp)
   int jpeg_len;
   uint32_t start;
 
-  snprintf(fname, sizeof(fname), "%s.JPG", timestamp);
+  snprintf(fname, sizeof(fname), "%s.jpg", timestamp);
 
   /* Full-sensor COLOR snapshot while the camera runs in detect (mono,
    * cropped/downsized) mode: reconfigure PIPE1 ONLY to full-frame YUV422.
@@ -598,7 +595,7 @@ static void record_jpeg_sd(const char *timestamp)
   JPG_Deinit();
 
   if (jpeg_len <= 0) {
-    printf("[REC] JPG_Encode failed (%d)\r\n", jpeg_len);
+    printf("[REC] JPG encode failed (%d)\r\n", jpeg_len);
     return;
   }
 
@@ -621,9 +618,7 @@ static void record_h264_sd(const char *timestamp)
   ENC_Conf_t enc_conf;
   char fname[40];
 
-  snprintf(fname, sizeof(fname), "%s.MP4", timestamp);
-
-  printf("[REC] record_h264_sd entry hw_init=%d\r\n", hw_initialized);
+  snprintf(fname, sizeof(fname), "%s.mp4", timestamp);
 
   /* Switch camera to 1280x720 RGB565 @ 30 fps for H264.
    * RGB565 (2 B/px) halves PSRAM bandwidth vs ARGB8888: fixes DCMIPP
@@ -661,7 +656,6 @@ static void record_h264_sd(const char *timestamp)
   force_intra       = 0;
   h264_frame_ready  = 0;
   h264_ready_buf    = buffer_full_frame;
-  h264_frame_events = 0;
 
   /* Open the MP4 file and start the muxer.
    * Ring buffer: the recording capture only uses the first 2 RGB565
@@ -672,7 +666,7 @@ static void record_h264_sd(const char *timestamp)
                 buffer_full_frame + 2 * H264_FRAME_BYTES,
                 MAX_CAPTURE_FRAME_SIZE - 2 * H264_FRAME_BYTES,
                 fname) != 0) {
-    printf("[REC] REC_Start failed, recording aborted\r\n");
+    printf("[REC] record start failed, recording aborted\r\n");
     warmup_done = 0;
     return;
   }
@@ -704,33 +698,15 @@ static void record_h264_sd(const char *timestamp)
       }
     }
   }
-
-  BSP_LED_On(LED_GREEN);  /* recording in progress (blinks) */
   printf("[REC] recording started (%d s)...\r\n", H264_RECORD_SECONDS);
 
   /* Record for H264_RECORD_SECONDS seconds */
   uint32_t start_tick = HAL_GetTick();
-  uint32_t last_report_tick = start_tick;
   uint32_t last_frame_tick = start_tick;
-  uint32_t last_led_tick = start_tick;
   uint32_t frame_count = 0;
   uint32_t encode_ok_count = 0;
 
   while (HAL_GetTick() - start_tick < (uint32_t)(H264_RECORD_SECONDS * 1000)) {
-    /* Blink the green LED at 1 Hz while recording */
-    if (HAL_GetTick() - last_led_tick >= 500) {
-      BSP_LED_Toggle(LED_GREEN);
-      last_led_tick = HAL_GetTick();
-    }
-
-    /* Periodic status report every 5 seconds */
-    if (HAL_GetTick() - last_report_tick >= 5000) {
-      printf("[REC] t=%lus frames=%lu encOK=%lu dcmippErr=%lu\r\n",
-             (HAL_GetTick() - start_tick) / 1000, frame_count, encode_ok_count,
-             (unsigned long)dcmipp_err_count);
-      last_report_tick = HAL_GetTick();
-    }
-
     if (!h264_frame_ready) {
       vTaskDelay(pdMS_TO_TICKS(1));
       continue;
@@ -763,9 +739,8 @@ static void record_h264_sd(const char *timestamp)
       }
     }
   }
-  printf("[REC] recording ended: events=%lu frames=%lu encOK=%lu dcmippErr=%lu\r\n",
-         (unsigned long)h264_frame_events, frame_count, encode_ok_count,
-         (unsigned long)dcmipp_err_count);
+  printf("[REC] recording ended: frames=%lu encOK=%lu dcmippErr=%lu\r\n",
+         frame_count, encode_ok_count, (unsigned long)dcmipp_err_count);
 
   /* Stop the capture->encode pipeline */
   h264_streaming = 0;
@@ -803,7 +778,6 @@ int CMW_CAMERA_PIPE_FrameEventCallback(uint32_t pipe)
       /* Double-buffer mode: P1STM0AR (status reg) holds the address of the
        * buffer the hardware just completed (VENC_SDCard example pattern). */
       h264_ready_buf = (uint8_t *)hcamera_dcmipp.Instance->P1STM0AR;
-      h264_frame_events++;
       h264_frame_ready = 1;
     }
     else if (!warmup_done)
@@ -821,12 +795,10 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
   return HAL_OK;
 }
 
-/* USER1 button: toggle config mode <-> detect mode */
 void BSP_PB_Callback(Button_TypeDef Button)
 {
-  if (Button == BUTTON_USER1){ //FIXME: code exemple, à garder pour l'instant
-    BSP_LED_Off(LED_GREEN);
-  }
+  if(Button == BUTTON_USER1) state = CONFIG_MODE_WARMUP;
+
 }
 
 /* ==========================================================================
@@ -835,15 +807,40 @@ void BSP_PB_Callback(Button_TypeDef Button)
 
 /* One-time peripheral init: LEDs, TAMP button (polling) and SD recorder
  * (SD card + FAT32 mount + FreeRTOS SD writer task). */
-uint8_t check_SD(void)
+int check_SD(void)
 {
-	uint8_t rec_ready = (REC_Init() == 0);
-  if (!rec_ready)
-    printf("[REC] SD init failed, retrying...\r\n");
-  else
-  	printf("[REC] SD init successful\r\n");
+	int rec_ready = REC_Init();
+	switch(rec_ready)
+	{
+	case 0:
+		printf("[uSD] uSD init successful\r\n");
+		break;
+	case -1:
+		printf("[uSD] f_mount failed - card FAT32-formatted?\r\n");
+		break;
+	case -2:
+		printf("[uSD] uSD init failed - card inserted?\r\n");
+		break;
+	case -3:
+		printf("[uSD] SDMMC2 clock config failed\r\n");
+		break;
+	default:
+		break;
+	}
 
-  return rec_ready;
+  return (rec_ready == 0);
+}
+
+void LED_mode(void)
+{
+	if(state < MOVEMENT_DETECTION){ // configuration process
+		BSP_LED_Off(LED_GREEN);
+		BSP_LED_On(LED_RED);
+	}
+	else{ // detection phase
+		BSP_LED_On(LED_GREEN);
+		BSP_LED_Off(LED_RED);
+	}
 }
 
 /* ==========================================================================
@@ -852,11 +849,7 @@ uint8_t check_SD(void)
 
 void app_run(void)
 {
-	/* DIAS state machine (local: not shared with any ISR/callback) */
-	state_t state = SD_CARD;
-
-	BSP_LED_Off(LED_GREEN);
-	BSP_LED_Off(LED_RED);
+	printf("[FSM] please press USER1 to restart from config mode warmup\r\n");
 
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
@@ -866,25 +859,25 @@ void app_run(void)
 
 	while(1)
 	{
+		LED_mode();
+
 		switch(state)
 		{
 		case SD_CARD:
-			uint8_t SD_in = check_SD();
-
-			if(SD_in){
-				BSP_LED_Off(LED_RED);
+			if(check_SD()){
 				state = CONFIG_MODE_WARMUP;
 				break;
 			}
-			BSP_LED_On(LED_RED);
-			HAL_Delay(1000);
+			HAL_Delay(2000);
 			break;
 
 		case CONFIG_MODE_WARMUP:
+			printf("[FSM] config mode warmup\r\n");
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
-			BSP_LED_On(LED_GREEN);
+			printf("[FSM] warmup ended\r\n");
 
 			state = SEND_YUV_FRAME;
+			printf("[FSM] wait for send yuv frame...\r\n");
 			break;
 
 		case SEND_YUV_FRAME:
@@ -901,6 +894,7 @@ void app_run(void)
 				uint8_t dt[6] = { 0 };
 				if (HAL_UART_Receive(&huart1, dt, sizeof(dt), 1000) == HAL_OK)
 					rtc_set_datetime(dt);
+				printf("[FSM] RTC set\r\n");
 			}
 			else if(cmd == 'V'){
 				state = RECEIVE_PIPES_CONFIG;
@@ -916,7 +910,6 @@ void app_run(void)
 			if (config_py.magic == CONFIG_MAGIC){
 				answer = 'V';
 				HAL_UART_Transmit(&huart1, &answer, 1, 100);
-				BSP_LED_Off(LED_GREEN);
 
 				state = DETECT_MODE_WARMUP;
 				break;
@@ -925,24 +918,28 @@ void app_run(void)
 			break;
 
 		case DETECT_MODE_WARMUP:
+			printf("[FSM] start detection mode warmup\r\n");
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
-			BSP_LED_On(LED_GREEN);
+			printf("[FSM] warmup ended\r\n");
 
 			state = PIPES_CONFIGURATION;
 			break;
 
 		case PIPES_CONFIGURATION:
+			printf("[FSM] pipes configuration\r\n");
 			dcmipp_apply_detect_config();
+
 			state = MOVEMENT_DETECTION;
+			printf("[FSM] start movement detection... (TAMP button)\r\n");
 			break;
 
 		case MOVEMENT_DETECTION:
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
-				BSP_LED_Off(LED_RED);
+				BSP_LED_Off(LED_GREEN);
+				printf("[FSM] movement detected!\r\n");
 				state = RECORDING;
 				break;
 			}
-			BSP_LED_On(LED_RED);
 			HAL_Delay(1000);
 			break;
 
@@ -954,12 +951,14 @@ void app_run(void)
 
 			record_jpeg_sd(timestamp);
 			record_h264_sd(timestamp);
-			BSP_LED_Off(LED_GREEN);
-
 			/* record_h264_sd() left the camera in 720p RGB565 and cleared
 			 * warmup_done: go through a full detect warmup again (the pipes
 			 * config is re-applied after it). */
+			BSP_LED_On(LED_GREEN);
 			state = DETECT_MODE_WARMUP;
+			break;
+
+		default:
 			break;
 		}
 	}

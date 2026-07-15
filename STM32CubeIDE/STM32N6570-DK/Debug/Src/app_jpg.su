@@ -1,8 +1,0 @@
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:33:5:JPG_Init	40	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:63:6:JPG_Deinit	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:70:5:JPG_Encode	40	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:109:6:HAL_JPEG_GetDataCallback	40	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:137:6:HAL_JPEG_DataReadyCallback	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:144:6:HAL_JPEG_MspInit	16	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:151:6:HAL_JPEG_MspDeInit	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/app_jpg.c:157:6:JPG_IRQHandler	0	static

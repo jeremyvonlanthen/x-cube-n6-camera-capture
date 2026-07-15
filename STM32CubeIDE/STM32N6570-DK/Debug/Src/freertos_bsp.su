@@ -1,7 +1,0 @@
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:31:10:HAL_GetTick	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:36:6:HAL_Delay	8	static,ignoring_inline_asm
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:44:19:HAL_InitTick	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:49:6:TIM4_Config	16	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:68:10:TIM4_Get_Value	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:74:6:vApplicationGetIdleTaskMemory	0	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Src/freertos_bsp.c:84:6:vApplicationGetTimerTaskMemory	0	static

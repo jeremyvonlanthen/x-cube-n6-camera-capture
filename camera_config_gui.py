@@ -6,18 +6,17 @@ via UART.
 
 Nouveautés :
   - Connexion automatique (polling) sur la carte ST (VID USB 0x0483)
-  - Bouton « Confirmer » supprimé : « Tester la config » disponible à tout moment
-  - « Envoyer la config » envoie d'abord 'V' (sortie du mode capture côté µC)
-    puis la structure Config_t
+  - Moniteur série : tous les printf du STM32 sont affichés dans le journal
+  - Fenêtre toujours carrée (rapport 1:1) mais redimensionnable
+  - Enchaînement imposé : Capturer → Tester → Envoyer
+  - Envoi de la date/heure courante au µC (commande 'T') avant la config
   - Thème clair, interface en français
-  - Zone de journal agrandie
 
 Dépendances : PyQt6, matplotlib, numpy, Pillow, pyserial
 Usage       : python camera_config_gui.py
 """
 
 import sys
-import os
 import time
 import struct
 import serial
@@ -36,7 +35,7 @@ from PIL import Image, ImageDraw, ImageFont
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QLineEdit, QPushButton, QFileDialog,
-    QFrame, QStatusBar, QGroupBox, QSizePolicy, QComboBox, QTextEdit,
+    QFrame, QGroupBox, QSizePolicy, QComboBox, QTextEdit,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QIntValidator, QPixmap
@@ -156,7 +155,7 @@ class ImageDisplay(QLabel):
         super().__init__(parent)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.setMinimumSize(600, 350)
+        self.setMinimumSize(400, 300)
         self._pixmap_full = None
         self._show_placeholder()
 
@@ -173,6 +172,12 @@ class ImageDisplay(QLabel):
         self.setText("")
         self._rescale()
 
+    def clear_image(self):
+        """Efface l'image affichée et remet le placeholder."""
+        self._pixmap_full = None
+        self.clear()
+        self._show_placeholder()
+
     def _rescale(self):
         if self._pixmap_full and not self._pixmap_full.isNull():
             scaled = self._pixmap_full.scaled(
@@ -185,6 +190,51 @@ class ImageDisplay(QLabel):
     def resizeEvent(self, event):
         self._rescale()
         super().resizeEvent(event)
+
+
+# =============================================================================
+#  Thread moniteur série : lit en continu les printf du STM32
+# =============================================================================
+
+class SerialMonitorThread(QThread):
+    line_received = pyqtSignal(str)
+
+    def __init__(self, port):
+        super().__init__()
+        self.port = port
+        self._running = True
+
+    def run(self):
+        try:
+            ser = serial.Serial(self.port, UART_BAUDRATE, timeout=0.2)
+        except serial.SerialException as e:
+            self.line_received.emit(f"[moniteur] ouverture impossible : {e}")
+            return
+
+        buf = bytearray()
+        while self._running:
+            try:
+                data = ser.read(256)
+            except Exception:
+                break
+            if not data:
+                continue
+            buf.extend(data)
+            while b'\n' in buf:
+                line, _, rest = buf.partition(b'\n')
+                buf = bytearray(rest)
+                text = line.decode('ascii', errors='replace').rstrip('\r')
+                if text:
+                    self.line_received.emit(text)
+
+        try:
+            ser.close()
+        except Exception:
+            pass
+
+    def stop(self):
+        self._running = False
+        self.wait(1500)
 
 
 # =============================================================================
@@ -203,7 +253,6 @@ class CaptureThread(QThread):
 
     def run(self):
         try:
-            self.status.emit("Connexion UART…")
             cdc = serial.Serial(self.port, UART_BAUDRATE, timeout=2)
             time.sleep(0.5)
 
@@ -214,13 +263,11 @@ class CaptureThread(QThread):
                 cdc.read(cdc.in_waiting)
                 time.sleep(0.1)
 
-            self.status.emit("Envoi commande 'S'…")
             cdc.write(b'S')
             cdc.flush()
 
             # Attendre sync 0xAA (la capture + encodage JPEG côté µC prend
             # un peu de temps : on laisse jusqu'à ~10 s)
-            self.status.emit("Attente du sync…")
             cdc.timeout = 2
             deadline = time.time() + 10.0
             got_sync = False
@@ -282,31 +329,12 @@ class CaptureThread(QThread):
             now = datetime.now()
             img_pil = Image.open(BytesIO(jpeg_data))
 
-            # ── Sauvegarde sur disque désactivée (dossier non requis) ────────
-            # if self.save_folder:
-            #     os.makedirs(self.save_folder, exist_ok=True)
-            #     filename = f"capture_{now.strftime('%Y%m%d_%H%M%S')}.jpg"
-            #     filepath = os.path.join(self.save_folder, filename)
-            #     with open(filepath, 'wb') as f:
-            #         f.write(jpeg_data)
-            #     # Ajouter timestamp sur l'image
-            #     img_pil = Image.open(filepath)
-            #     draw    = ImageDraw.Draw(img_pil)
-            #     try:
-            #         font = ImageFont.truetype("arial.ttf", 36)
-            #     except Exception:
-            #         font = ImageFont.load_default()
-            #     draw.text((50, 50), now.strftime('%d/%m/%Y\n%Hh%M %Ss'),
-            #               fill=(255,), font=font)
-            #     img_pil.save(filepath)
-            # ─────────────────────────────────────────────────────────────────
-
             # Convertir en numpy pour affichage
             img_np = np.array(img_pil.convert("RGB"), dtype=np.uint8)
 
             desc = (f"exposition = {exposure_us} µs | gain = {gain_db:.1f} dB "
                     f"(≈ ISO {iso_approx})")
-            self.status.emit(f"Image reçue — {desc}")
+            self.status.emit(f"Image reçue: {desc}")
             self.image_received.emit(img_np, desc)
 
         except serial.SerialException as e:
@@ -349,15 +377,26 @@ class SendConfigThread(QThread):
             ser.reset_input_buffer()
             ser.reset_output_buffer()
 
+            # 0) 'T' : régler la RTC du µC avec la date/heure courante
+            #    (6 octets : année-2000, mois, jour, heure, minute, seconde).
+            #    Doit être envoyé pendant que le µC est encore en mode config
+            #    (SEND_YUV_FRAME), donc AVANT le 'V'.
+            now = datetime.now()
+            tpayload = bytes([now.year - 2000, now.month, now.day,
+                              now.hour, now.minute, now.second])
+            ser.write(b'T' + tpayload)
+            ser.flush()
+            self.status.emit(
+                f"Date/heure envoyée : {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            time.sleep(0.2)
+
             # 1) 'V' : fait sortir le µC du mode capture (SEND_YUV_FRAME)
             #    vers la réception de config (RECEIVE_PIPES_CONFIG)
-            self.status.emit("Envoi de 'V' (passage en réception de config)…")
             ser.write(b'V')
             ser.flush()
             time.sleep(0.3)
 
             # 2) La structure Config_t
-            self.status.emit("Envoi de la structure de configuration…")
             ser.write(data)
             ser.flush()
 
@@ -368,7 +407,7 @@ class SendConfigThread(QThread):
                 answer = ser.read(1)
                 if answer == b'V':
                     ser.close()
-                    self.result.emit(True, "✔  Config reçue et validée par le microcontrôleur.")
+                    self.result.emit(True, "Config reçue et validée par le microcontrôleur.")
                     return
                 elif answer == b'F':
                     pass  # en attente côté µC
@@ -447,19 +486,28 @@ QPushButton {
 QPushButton:hover { border-color: #4a7ad4; color: #2a3442; background-color: #eef3fc; }
 QPushButton:pressed { background-color: #dde7f8; }
 QPushButton:disabled { color: #b0b8c4; border-color: #dde2ea; background-color: #f0f2f6; }
-QPushButton#btn-capture { border-color: #5a9a5a; color: #2f7a2f; }
-QPushButton#btn-capture:hover { background-color: #ecf6ec; border-color: #3f9a3f; color: #1f6a1f; }
-QPushButton#btn-try { border-color: #c09a4a; color: #96702a; }
-QPushButton#btn-try:hover { background-color: #faf4e6; border-color: #caa050; color: #7a5a1a; }
-QPushButton#btn-send { border-color: #4a6ac4; color: #2a4aa4; font-weight: bold; }
-QPushButton#btn-send:hover { background-color: #eaf0fc; border-color: #2a5ad4; color: #1a3a94; }
-QPushButton#btn-refresh { border-color: #c9d2e0; color: #4a5a78; padding: 4px 8px; min-height: 24px; }
-QPushButton#btn-refresh:hover { border-color: #4a7ad4; color: #2a3442; }
-QStatusBar {
-    background-color: #e8ecf4;
-    color: #4a5a78;
-    font-size: 9px;
-    border-top: 1px solid #c9d2e0;
+
+/* Boutons actifs : remplis d'une couleur pastel, texte blanc.
+ * Désactivés : gris (règle :disabled ci-dessous). */
+QPushButton#btn-capture:enabled { background-color: #7cc47c; border-color: #5a9a5a; color: #ffffff; }
+QPushButton#btn-capture:enabled:hover  { background-color: #66b366; }
+QPushButton#btn-capture:enabled:pressed { background-color: #559a55; }
+QPushButton#btn-capture:disabled { background-color: #f0f2f6; border-color: #dde2ea; color: #b0b8c4; }
+
+QPushButton#btn-try:enabled { background-color: #e0be5e; border-color: #c9a544; color: #ffffff; }
+QPushButton#btn-try:enabled:hover  { background-color: #d3ad46; }
+QPushButton#btn-try:enabled:pressed { background-color: #bd9a38; }
+QPushButton#btn-try:disabled { background-color: #f0f2f6; border-color: #dde2ea; color: #b0b8c4; }
+
+QPushButton#btn-send:enabled { background-color: #7a9ce0; border-color: #4a6ac4; color: #ffffff; font-weight: bold; }
+QPushButton#btn-send:enabled:hover  { background-color: #6488d6; }
+QPushButton#btn-send:enabled:pressed { background-color: #5578c8; }
+QPushButton#btn-send:disabled { background-color: #f0f2f6; border-color: #dde2ea; color: #b0b8c4; }
+QLabel#dtclock {
+    color: #2a5ad4;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 13px;
+    letter-spacing: 1px;
 }
 QTextEdit#logbox {
     background-color: #ffffff;
@@ -499,17 +547,31 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Configuration Caméra — STM32N6")
-        self.resize(1300, 850)
         self.setStyleSheet(STYLE)
 
-        self._last_image     = None   # numpy array
+        # État du flux de travail
+        self._last_image     = None    # numpy array
         self._capture_thread = None
         self._send_thread    = None
-        self._auto_port      = None   # port de la carte ST détectée
+        self._monitor        = None    # SerialMonitorThread
+        self._auto_port      = None    # port de la carte ST détectée
+
+        self._captured = False   # une capture a réussi
+        self._tested   = False   # « Tester » pressé depuis la dernière capture
+        self._sent     = False   # config envoyée (fin de session)
+        self._busy     = False   # capture/envoi en cours
 
         self._build_ui()
         self._connect_signals()
-        self._set_buttons_state("idle")
+        self._update_buttons()
+
+        self.resize(1200, 850)
+
+        # ── Horloge (date/heure envoyée au ST) ───────────────────────────────
+        self._dt_timer = QTimer(self)
+        self._dt_timer.timeout.connect(self._update_dt_label)
+        self._dt_timer.start(1000)
+        self._update_dt_label()
 
         # ── Connexion automatique : polling des ports série ──────────────────
         self._poll_timer = QTimer(self)
@@ -532,7 +594,7 @@ class MainWindow(QMainWindow):
         ll.setContentsMargins(12, 12, 12, 12)
         ll.setSpacing(10)
 
-        title = QLabel("CONFIG\nCAMÉRA")
+        title = QLabel("DIAS\nConfiguration caméra")
         title.setFont(QFont("Segoe UI", 17, QFont.Weight.Bold))
         title.setStyleSheet("color: #2a5ad4; letter-spacing: 3px;")
         ll.addWidget(title)
@@ -547,32 +609,20 @@ class MainWindow(QMainWindow):
         pl.addWidget(self.port_info)
         ll.addWidget(pg)
 
-        # ── Dossier de sauvegarde — désactivé (non nécessaire pour l'instant) ─
-        # dg = QGroupBox("Dossier de sauvegarde")
-        # dl = QVBoxLayout(dg); dl.setSpacing(5)
-        # dr = QHBoxLayout()
-        # self.dir_field = QLineEdit()
-        # self.dir_field.setPlaceholderText("chemin/vers/dossier…")
-        # self.dir_btn = QPushButton("…")
-        # self.dir_btn.setFixedWidth(30); self.dir_btn.setFixedHeight(28)
-        # dr.addWidget(self.dir_field); dr.addWidget(self.dir_btn)
-        # dl.addLayout(dr)
-        # ll.addWidget(dg)
-        # ──────────────────────────────────────────────────────────────────────
+        # ── Date / heure envoyée au ST ────────────────────────────────────────
+        dtg = QGroupBox("Date/heure (envoyée au ST)")
+        dtl = QVBoxLayout(dtg); dtl.setSpacing(5)
+        self.dt_label = QLabel("------ --:--:--")
+        self.dt_label.setObjectName("dtclock")
+        self.dt_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        dtl.addWidget(self.dt_label)
+        ll.addWidget(dtg)
 
         # ── Bouton Capture ────────────────────────────────────────────────────
-        self.btn_capture = QPushButton("▶  Capturer")
+        self.btn_capture = QPushButton("Capturer une image")
         self.btn_capture.setObjectName("btn-capture")
         self.btn_capture.setMinimumHeight(34)
-        self.btn_capture.setEnabled(False)
         ll.addWidget(self.btn_capture)
-
-        # ── Bouton Confirm — supprimé (Try config disponible à tout moment) ──
-        # self.btn_confirm = QPushButton("✔  Confirm")
-        # self.btn_confirm.setObjectName("btn-confirm")
-        # self.btn_confirm.setMinimumHeight(34)
-        # self.btn_confirm.setEnabled(False)
-        # ──────────────────────────────────────────────────────────────────────
 
         s1 = QFrame(); s1.setObjectName("sep"); ll.addWidget(s1)
 
@@ -614,12 +664,12 @@ class MainWindow(QMainWindow):
         s2 = QFrame(); s2.setObjectName("sep"); ll.addWidget(s2)
 
         # ── Boutons Tester / Envoyer ──────────────────────────────────────────
-        self.btn_try  = QPushButton("◈  Tester la config")
+        self.btn_try  = QPushButton("Tester la configuration")
         self.btn_try.setObjectName("btn-try")
         self.btn_try.setMinimumHeight(32)
         ll.addWidget(self.btn_try)
 
-        self.btn_send = QPushButton("⚡  Envoyer la config")
+        self.btn_send = QPushButton("Envoyer la configuration")
         self.btn_send.setObjectName("btn-send")
         self.btn_send.setMinimumHeight(34)
         ll.addWidget(self.btn_send)
@@ -649,24 +699,48 @@ class MainWindow(QMainWindow):
         root.addWidget(left)
         root.addWidget(right, stretch=1)
 
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
-        self.status_bar.showMessage("Prêt.")
         self._log("Application démarrée — recherche de la carte ST (VID 0x0483)…")
 
     # ── Journal ───────────────────────────────────────────────────────────────
 
     def _log(self, msg):
         ts = datetime.now().strftime("%H:%M:%S")
-        self.logbox.append(f"[{ts}]  {msg}")
+        self.logbox.append(f"[{ts}] {msg}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
-        self.status_bar.showMessage(msg)
+
+    def _log_stm(self, text):
+        """Ligne brute reçue du STM32 (printf)."""
+        self.logbox.append(f"<span style='color:#2f7a2f'>ST »</span> {text}")
+        sb = self.logbox.verticalScrollBar()
+        sb.setValue(sb.maximum())
+
+    # ── Horloge date/heure ─────────────────────────────────────────────────────
+
+    def _update_dt_label(self):
+        self.dt_label.setText(datetime.now().strftime("%Y-%m-%d  %H:%M:%S"))
+
+    # ── Moniteur série (printf) ────────────────────────────────────────────────
+
+    def _start_monitor(self):
+        if self._monitor is not None or not self._auto_port:
+            return
+        self._monitor = SerialMonitorThread(self._auto_port)
+        self._monitor.line_received.connect(self._log_stm)
+        self._monitor.start()
+
+    def _stop_monitor(self):
+        if self._monitor is not None:
+            try:
+                self._monitor.line_received.disconnect()
+            except Exception:
+                pass
+            self._monitor.stop()
+            self._monitor = None
 
     # ── Signaux ───────────────────────────────────────────────────────────────
 
     def _connect_signals(self):
-        # self.dir_btn.clicked.connect(self._browse_dir)   # dossier désactivé
         self.btn_capture.clicked.connect(self._do_capture)
         self.btn_try.clicked.connect(self._do_try)
         self.btn_send.clicked.connect(self._do_send)
@@ -688,21 +762,22 @@ class MainWindow(QMainWindow):
                 self.port_info.setText(f"✔ Connectée : {st_port.device}\n{desc}")
                 self.port_info.setStyleSheet("color: #2f7a2f; font-size: 10px;")
                 self._log(f"Carte ST détectée sur {st_port.device} ({desc}).")
-                self.btn_capture.setEnabled(True)
+                # Nouvelle connexion : on repart d'un flux propre
+                self._captured = False
+                self._tested   = False
+                self._sent     = False
+                self.display.clear_image()
+                self._last_image = None
+                self._update_buttons()
+                self._start_monitor()
         else:
             if self._auto_port is not None:
                 self._log("Carte ST déconnectée.")
+                self._stop_monitor()
             self._auto_port = None
             self.port_info.setText("⌛ Recherche de la carte… (VID 0x0483)")
             self.port_info.setStyleSheet("color: #96702a; font-size: 10px;")
-            self.btn_capture.setEnabled(False)
-
-    # ── Dossier — désactivé ───────────────────────────────────────────────────
-
-    # def _browse_dir(self):
-    #     d = QFileDialog.getExistingDirectory(self, "Sélectionner le dossier de sauvegarde")
-    #     if d:
-    #         self.dir_field.setText(d)
+            self._update_buttons()
 
     # ── Info decimation pipe 2 ────────────────────────────────────────────────
 
@@ -728,23 +803,30 @@ class MainWindow(QMainWindow):
     def _do_capture(self):
         port = self._get_port()
         if not port: return
-        self._set_buttons_state("busy")
-        self._log("Capture demandée…")
-        self._capture_thread = CaptureThread(port)   # pas de dossier de sauvegarde
+        self._busy = True
+        self._update_buttons()
+        self._stop_monitor()          # libère le port pour la capture
+        self._capture_thread = CaptureThread(port)
         self._capture_thread.image_received.connect(self._on_image_received)
         self._capture_thread.error.connect(self._on_error)
         self._capture_thread.status.connect(self._log)
-        self._capture_thread.finished.connect(lambda: self._set_buttons_state("idle"))
+        self._capture_thread.finished.connect(self._on_capture_finished)
         self._capture_thread.start()
 
     def _on_image_received(self, img_np, desc):
         self._last_image = img_np
+        self._captured = True
+        self._tested   = False        # nouvelle capture => il faut re-tester
         size = (self.display.width(), self.display.height())
         pix = make_raw_pixmap(img_np, size)
         self.display.set_pixmap(pix)
-        self._log(f"Image affichée ({desc}).")
 
-    # ── Tester la config (local, disponible à tout moment) ───────────────────
+    def _on_capture_finished(self):
+        self._busy = False
+        self._update_buttons()
+        self._start_monitor()         # reprend l'écoute des printf
+
+    # ── Tester la config (local) ──────────────────────────────────────────────
 
     def _do_try(self):
         if self._last_image is None:
@@ -766,11 +848,8 @@ class MainWindow(QMainWindow):
             size
         )
         self.display.set_pixmap(pix)
-        self._log(
-            f"Test de la config  |  "
-            f"Pipe1 Y[{cfg['crop_v_start_pipe1']}–{cfg['crop_v_start_pipe1']+cfg['crop_v_size_pipe1']}]  "
-            f"Pipe2 Y[{cfg['crop_v_start_pipe2']}–{cfg['crop_v_start_pipe2']+cfg['crop_v_size_pipe2']}]"
-        )
+        self._tested = True           # débloque « Envoyer »
+        self._update_buttons()
 
     # ── Envoyer la config ─────────────────────────────────────────────────────
 
@@ -779,16 +858,28 @@ class MainWindow(QMainWindow):
         if not port: return
         cfg = self._read_config()
         if cfg is None: return
-        self._set_buttons_state("busy")
+        self._busy = True
+        self._update_buttons()
+        self._stop_monitor()          # libère le port pour l'envoi
         self._log("Envoi de la configuration…")
         self._send_thread = SendConfigThread(port, cfg)
         self._send_thread.result.connect(self._on_send_result)
         self._send_thread.status.connect(self._log)
-        self._send_thread.finished.connect(lambda: self._set_buttons_state("idle"))
+        self._send_thread.finished.connect(self._on_send_finished)
         self._send_thread.start()
 
     def _on_send_result(self, success, msg):
         self._log(msg)
+        if success:
+            # Config validée : l'image disparaît, les 3 boutons se figent
+            self._sent = True
+            self.display.clear_image()
+            self._last_image = None
+
+    def _on_send_finished(self):
+        self._busy = False
+        self._update_buttons()
+        self._start_monitor()         # continue d'écouter (logs d'enregistrement)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -797,6 +888,23 @@ class MainWindow(QMainWindow):
             self._log("⚠  Aucune carte ST détectée.")
             return None
         return self._auto_port
+
+    def _update_buttons(self):
+        """Applique les règles d'enchaînement Capturer → Tester → Envoyer."""
+        connected = self._auto_port is not None
+
+        if self._sent or self._busy:
+            # Session terminée ou opération en cours : tout est figé
+            self.btn_capture.setEnabled(False)
+            self.btn_try.setEnabled(False)
+            self.btn_send.setEnabled(False)
+            return
+
+        self.btn_capture.setEnabled(connected)
+        # Tester : seulement après une capture
+        self.btn_try.setEnabled(connected and self._captured)
+        # Envoyer : seulement après une capture ET un test
+        self.btn_send.setEnabled(connected and self._captured and self._tested)
 
     def _read_config(self):
         def to_int(field, name):
@@ -878,16 +986,13 @@ class MainWindow(QMainWindow):
 
     def _on_error(self, msg):
         self._log(f"⚠  {msg}")
-        self._set_buttons_state("idle")
-
-    def _set_buttons_state(self, state):
-        busy = (state == "busy")
-        for w in (self.btn_try, self.btn_send):
-            w.setEnabled(not busy)
-        self.btn_capture.setEnabled(not busy and self._auto_port is not None)
+        self._busy = False
+        self._update_buttons()
 
     def closeEvent(self, event):
         self._poll_timer.stop()
+        self._dt_timer.stop()
+        self._stop_monitor()
         for t in (self._capture_thread, self._send_thread):
             if t and t.isRunning():
                 t.wait(2000)

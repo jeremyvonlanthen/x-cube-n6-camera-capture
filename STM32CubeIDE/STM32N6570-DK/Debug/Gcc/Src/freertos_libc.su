@@ -1,3 +1,0 @@
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Gcc/Src/freertos_libc.c:34:6:freertos_libc_init	8	static
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Gcc/Src/freertos_libc.c:42:6:__malloc_lock	8	static,ignoring_inline_asm
-C:/Users/jeremy.vonlanth/switchdrive/00_RaD/5_DIAS/DIAS/Gcc/Src/freertos_libc.c:56:6:__malloc_unlock	8	static,ignoring_inline_asm
