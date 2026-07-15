@@ -269,7 +269,6 @@ static void rtc_init(void)
   }
 
   rtc_ready = 1;
-  printf("[RTC] initialized on LSI\r\n");
 }
 
 /* Sets the RTC calendar from a 6-byte payload (year-2000, month, day, hour,
@@ -698,7 +697,7 @@ static void record_h264_sd(const char *timestamp)
       }
     }
   }
-  printf("[REC] recording started (%d s)...\r\n", H264_RECORD_SECONDS);
+  printf("[REC] recording started (%dsec)...\r\n", H264_RECORD_SECONDS);
 
   /* Record for H264_RECORD_SECONDS seconds */
   uint32_t start_tick = HAL_GetTick();
@@ -759,9 +758,9 @@ static void record_h264_sd(const char *timestamp)
   /* Flush pending frames and finalize the MP4 (writes the moov index).
    * Blocks until the SD writer task is done. */
   if (REC_Stop() == 0)
-    printf("[REC] MP4 file finalized OK\r\n");
+    printf("[REC] mp4 file finalized ok\r\n");
   else
-    printf("[REC] MP4 finalize FAILED\r\n");
+    printf("[REC] mp4 finalize failed\r\n");
 
   /* Re-enter current mode from scratch */
   warmup_done = 0;
@@ -819,7 +818,7 @@ int check_SD(void)
 		printf("[uSD] required formatting failed (FAT32)\r\n");
 		break;
 	case -2:
-		printf("[uSD] no uSD card detected/mounted\r\n");
+		printf("[uSD] no uSD card detected/mounted (retry in 2sec)\r\n");
 		break;
 	case -3:
 		printf("[uSD] SDMMC2 clock config failed\r\n");
@@ -877,7 +876,7 @@ void app_run(void)
 			printf("[FSM] warmup ended\r\n");
 
 			state = SEND_YUV_FRAME;
-			printf("[FSM] wait for send yuv frame...\r\n");
+			printf("[FSM] wait for send yuv frame... (capturer une image)\r\n");
 			break;
 
 		case SEND_YUV_FRAME:

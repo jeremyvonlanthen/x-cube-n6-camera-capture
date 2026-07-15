@@ -320,14 +320,29 @@ class SerialWorker(QThread):
             ser.reset_input_buffer()
             ser.write(b'S'); ser.flush()
 
-            # Sync 0xAA (capture + encodage JPEG : jusqu'à ~10 s)
+            # Sync 0xAA (capture + encodage JPEG : jusqu'à ~10 s).
+            # Avant le 0xAA, le µC peut émettre des printf (ex.
+            # "[FSM] frame captured: X KB") : on les journalise au lieu de les
+            # jeter.
             ser.timeout = 2
             deadline = time.time() + 10.0
             got_sync = False
+            pre = bytearray()
             while time.time() < deadline:
-                if ser.read(1) == b'\xaa':
+                b = ser.read(1)
+                if not b:
+                    continue
+                if b == b'\xaa':
                     got_sync = True
                     break
+                c = b[0]
+                if c == 0x0A:
+                    text = pre.decode('ascii', errors='replace').rstrip('\r')
+                    pre = bytearray()
+                    if text:
+                        self.line_received.emit(text)
+                elif c != 0x0D:
+                    pre.append(c)
             if not got_sync:
                 self.capture_error.emit(
                     "Timeout — pas de sync reçu (le µC est-il en mode config ?).")
@@ -513,6 +528,7 @@ class MainWindow(QMainWindow):
         self._worker     = None    # SerialWorker (unique propriétaire du port)
         self._auto_port  = None    # port de la carte ST détectée
 
+        self._ready    = False   # µC prêt (message "wait for send yuv frame")
         self._captured = False   # une capture a réussi
         self._tested   = False   # « Tester » pressé depuis la dernière capture
         self._sent     = False   # config envoyée (fin de session)
@@ -661,16 +677,35 @@ class MainWindow(QMainWindow):
     # ── Journal ───────────────────────────────────────────────────────────────
 
     def _log(self, msg):
-        ts = datetime.now().strftime("%H:%M:%S")
-        self.logbox.append(f"[{ts}] {msg}")
+        self.logbox.append(f"<span style='color:#2a5ad4'>APP DIAS &raquo;</span> {msg}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
 
     def _log_stm(self, text):
         """Ligne brute reçue du STM32 (printf)."""
-        self.logbox.append(f"<span style='color:#2f7a2f'>ST »</span> {text}")
+        self.logbox.append(f"<span style='color:#2f7a2f'>STM &raquo;</span> {text}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
+        # Le µC signale qu'il attend une capture -> (ré)active "Capturer"
+        if "wait for send yuv frame" in text:
+            self._on_ready()
+        if "config mode warmup" in text:
+            self._log("STM32N6 is in config mode (warmup).")
+
+    def _on_ready(self):
+        """Reçu à chaque fois que le µC entre en attente de capture ('wait for
+        send yuv frame') : on repart d'un flux propre et on (ré)active
+        "Capturer".  Le µC n'émet ce message qu'une fois par entrée dans cet
+        état (jamais entre une capture et son envoi), donc ce reset ne clobbe
+        pas une capture en cours."""
+        self._ready    = True
+        self._busy     = False
+        self._captured = False
+        self._tested   = False
+        self._sent     = False
+        self.display.clear_image()
+        self._last_image = None
+        self._update_buttons()
 
     # ── Horloge date/heure ─────────────────────────────────────────────────────
 
@@ -719,7 +754,9 @@ class MainWindow(QMainWindow):
                 self.port_info.setText(f"✔ Connectée : {st_port.device}\n{desc}")
                 self.port_info.setStyleSheet("color: #2f7a2f; font-size: 10px;")
                 self._log(f"STM32N6 detected ({desc}).")
-                # Nouvelle connexion : on repart d'un flux propre
+                # Nouvelle connexion : flux propre.  "Capturer" reste désactivé
+                # jusqu'à réception de "wait for send yuv frame".
+                self._ready    = False
                 self._captured = False
                 self._tested   = False
                 self._sent     = False
@@ -731,6 +768,7 @@ class MainWindow(QMainWindow):
             if self._auto_port is not None:
                 self._log("STM32N6 disconnected.")
                 self._stop_worker()
+                self._ready = False
             self._auto_port = None
             self.port_info.setText("Searching for STM32N6 board… (VID 0x0483)")
             self.port_info.setStyleSheet("color: #96702a; font-size: 10px;")
@@ -821,6 +859,9 @@ class MainWindow(QMainWindow):
         )
         self._busy = True
         self._update_buttons()
+        # L'image disparaît dès l'envoi de la config
+        self.display.clear_image()
+        self._last_image = None
         self._worker.request_config(data)
 
     def _on_send_result(self, success, msg):
@@ -852,7 +893,8 @@ class MainWindow(QMainWindow):
             self.btn_send.setEnabled(False)
             return
 
-        self.btn_capture.setEnabled(connected)
+        # Capturer : seulement quand le µC a signalé "wait for send yuv frame"
+        self.btn_capture.setEnabled(connected and self._ready)
         # Tester : seulement après une capture
         self.btn_try.setEnabled(connected and self._captured)
         # Envoyer : seulement après une capture ET un test
