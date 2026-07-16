@@ -123,22 +123,19 @@ typedef enum
  * ========================================================================== */
 
 /* External handles */
-extern UART_HandleTypeDef huart1;                 /* main.c */
-extern DCMIPP_HandleTypeDef hcamera_dcmipp;       /* app_cam.c */
-/* DCMIPP pipe error counter (overruns = corrupted line endings),
- * incremented by CMW_CAMERA_PIPE_ErrorCallback in app_cam.c */
+extern UART_HandleTypeDef huart1;
+extern DCMIPP_HandleTypeDef hcamera_dcmipp;
 extern volatile uint32_t dcmipp_err_count;
 
 /* Configuration received from the Python GUI */
 static Config_t config_py = { 0 };
 
-/* DIAS state machine (local: not shared with any ISR/callback) */
+/* DIAS state machine */
 state_t state = SD_CARD;
 
 /* Capture buffers (PSRAM) */
 static uint8_t buffer_full_frame[MAX_CAPTURE_FRAME_SIZE] ALIGN_32 IN_PSRAM;
 static uint8_t hires_jpeg_buffer[MAX_JPEG_FRAME_SIZE] ALIGN_32 IN_PSRAM;
-/* H264 encoder output buffer (VENC hardware writes here) */
 static uint8_t h264_venc_out[H264_VENC_OUT_SIZE] ALIGN_32 IN_PSRAM;
 
 /* Detect-mode capture buffers, allocated from the AXISRAM pool once the
@@ -189,7 +186,7 @@ int __io_putchar(int ch)
 }
 
 /* Simple bump allocator in AXISRAM (allocations are never freed) */
-__attribute__((section(".axisram_bss"))) static uint8_t axisram_pool[1 * 1024 * 1024];
+__attribute__((section(".axisram_bss"))) static uint8_t axisram_pool[1 * 1024 * 1024]; //FIXME: problème repéré avec Léonard
 static uint32_t axisram_offset = 0;
 
 static void *axisram_alloc(uint32_t size)
@@ -796,8 +793,9 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
 
 void BSP_PB_Callback(Button_TypeDef Button)
 {
-  if(Button == BUTTON_USER1) state = CONFIG_MODE_WARMUP;
-
+  if(Button == BUTTON_USER1)
+  	state >= CONFIG_MODE_WARMUP ?
+			state = CONFIG_MODE_WARMUP : printf("[FSM] restart from config mode warmup not yet available\r\n");
 }
 
 /* ==========================================================================
@@ -848,8 +846,6 @@ void LED_mode(void)
 
 void app_run(void)
 {
-	printf("[FSM] please press USER1 to restart from config mode warmup\r\n");
-
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
 

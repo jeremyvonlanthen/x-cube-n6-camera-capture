@@ -31,16 +31,15 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QGridLayout, QLabel, QLineEdit, QPushButton, QFileDialog,
-    QFrame, QGroupBox, QSizePolicy, QComboBox, QTextEdit,
+    QGridLayout, QLabel, QLineEdit, QPushButton,
+    QFrame, QGroupBox, QSizePolicy, QTextEdit,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QIntValidator, QPixmap
-
 
 # =============================================================================
 #  Constantes
@@ -50,12 +49,9 @@ MAGIC          = 0x12345678
 UART_BAUDRATE  = 10_000_000
 ST_VID         = 0x0483      # VID USB STMicroelectronics (ST-Link VCP)
 POLL_MS        = 1500        # période de polling des ports série
-IMAGE_W        = 2592
-IMAGE_H        = 1944
 BG             = "#f4f6fa"   # fond clair
 FG             = "#2a3442"
 MAX_DOWNSIZE   = 7.99   # downsize_ratio max (jamais 8 exactement)
-
 
 # =============================================================================
 #  Calcul decimation pipe 2
@@ -73,7 +69,6 @@ def compute_pipe2_params(block_size):
         if downsize <= MAX_DOWNSIZE:
             return dec, downsize
     return None, None
-
 
 # =============================================================================
 #  Rendu matplotlib → QPixmap
@@ -146,7 +141,6 @@ def make_preview_pixmap(img, p1_top, p1_bot, p1_left, p1_right,
     plt.close(fig)
     return pix
 
-
 # =============================================================================
 #  Widget d'affichage
 # =============================================================================
@@ -191,7 +185,6 @@ class ImageDisplay(QLabel):
     def resizeEvent(self, event):
         self._rescale()
         super().resizeEvent(event)
-
 
 # =============================================================================
 #  Thread série unique : SEUL propriétaire du port COM
@@ -393,7 +386,6 @@ class SerialWorker(QThread):
         finally:
             ser.timeout = 0.2         # rétablit le timeout de lecture continue
 
-
 # =============================================================================
 #  Style (thème clair)
 # =============================================================================
@@ -495,7 +487,6 @@ QFrame#sep { background-color: #c9d2e0; max-height: 1px; min-height: 1px; }
 QFrame#panel { background-color: #fbfcfe; border: 1px solid #c9d2e0; border-radius: 4px; }
 """
 
-
 # =============================================================================
 #  Helpers UI
 # =============================================================================
@@ -511,7 +502,6 @@ def _int_field(default="0", max_val=99999):
     f.setValidator(QIntValidator(0, max_val))
     f.setMaximumWidth(90)
     return f
-
 
 # =============================================================================
 #  Fenêtre principale
@@ -672,12 +662,14 @@ class MainWindow(QMainWindow):
         root.addWidget(left)
         root.addWidget(right, stretch=1)
 
-        self._log("Application started — searching for ST board (VID 0x0483)…")
+        self._log("application started")
+        self._log("<b>NOTE: IF NECESSARY, PRESS <i>USER1</i> BUTTON TO RESTART CONFIG PROCEDURE</b>")
+        self._log("looking for dev. board (VID 0x0483)…")
 
     # ── Journal ───────────────────────────────────────────────────────────────
 
     def _log(self, msg):
-        self.logbox.append(f"<span style='color:#2a5ad4'>APP DIAS &raquo;</span> {msg}")
+        self.logbox.append(f"<span style='color:#2a5ad4'>APP DIAS &raquo;</span>&nbsp;&nbsp;{msg}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
 
@@ -690,7 +682,7 @@ class MainWindow(QMainWindow):
         if "wait for send yuv frame" in text:
             self._on_ready()
         if "config mode warmup" in text:
-            self._log("STM32N6 is in config mode (warmup).")
+            self._on_config_warmup()
 
     def _on_ready(self):
         """Reçu à chaque fois que le µC entre en attente de capture ('wait for
@@ -699,6 +691,19 @@ class MainWindow(QMainWindow):
         état (jamais entre une capture et son envoi), donc ce reset ne clobbe
         pas une capture en cours."""
         self._ready    = True
+        self._busy     = False
+        self._captured = False
+        self._tested   = False
+        self._sent     = False
+        self.display.clear_image()
+        self._last_image = None
+        self._update_buttons()
+
+    def _on_config_warmup(self):
+        """Le µC (re)démarre un warmup de config : retour à l'état initial du
+        lancement, les 3 boutons sont désactivés jusqu'au prochain
+        'wait for send yuv frame'."""
+        self._ready    = False
         self._busy     = False
         self._captured = False
         self._tested   = False
@@ -751,9 +756,9 @@ class MainWindow(QMainWindow):
             if self._auto_port != st_port.device:
                 self._auto_port = st_port.device
                 desc = st_port.description or "carte ST"
-                self.port_info.setText(f"✔ Connectée : {st_port.device}\n{desc}")
+                self.port_info.setText(f"✔ Connectée : {st_port.device}")
                 self.port_info.setStyleSheet("color: #2f7a2f; font-size: 10px;")
-                self._log(f"STM32N6 detected ({desc}).")
+                self._log(f"dev. board detected ({desc}).")
                 # Nouvelle connexion : flux propre.  "Capturer" reste désactivé
                 # jusqu'à réception de "wait for send yuv frame".
                 self._ready    = False
@@ -766,11 +771,11 @@ class MainWindow(QMainWindow):
                 self._start_worker()
         else:
             if self._auto_port is not None:
-                self._log("STM32N6 disconnected.")
+                self._log("dev. board disconnected")
                 self._stop_worker()
                 self._ready = False
             self._auto_port = None
-            self.port_info.setText("Searching for STM32N6 board… (VID 0x0483)")
+            self.port_info.setText("Searching for dev. board… (VID 0x0483)")
             self.port_info.setStyleSheet("color: #96702a; font-size: 10px;")
             self._update_buttons()
 
@@ -796,9 +801,6 @@ class MainWindow(QMainWindow):
     # ── Capture ───────────────────────────────────────────────────────────────
 
     def _do_capture(self):
-        if self._worker is None:
-            self._log("⚠  Aucune carte ST détectée.")
-            return
         self._busy = True
         self._update_buttons()
         self._worker.request_capture()
@@ -816,9 +818,6 @@ class MainWindow(QMainWindow):
     # ── Tester la config (local) ──────────────────────────────────────────────
 
     def _do_try(self):
-        if self._last_image is None:
-            self._log("⚠  Faites d'abord une capture.")
-            return
         cfg = self._read_config()
         if cfg is None: return
         size = (self.display.width(), self.display.height())
@@ -841,9 +840,6 @@ class MainWindow(QMainWindow):
     # ── Envoyer la config ─────────────────────────────────────────────────────
 
     def _do_send(self):
-        if self._worker is None:
-            self._log("⚠  Aucune carte ST détectée.")
-            return
         cfg = self._read_config()
         if cfg is None: return
         data = struct.pack(
@@ -876,12 +872,6 @@ class MainWindow(QMainWindow):
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _get_port(self):
-        if not self._auto_port:
-            self._log("⚠  Aucune carte ST détectée.")
-            return None
-        return self._auto_port
-
     def _update_buttons(self):
         """Applique les règles d'enchaînement Capturer → Tester → Envoyer."""
         connected = self._auto_port is not None
@@ -907,7 +897,7 @@ class MainWindow(QMainWindow):
                 if v < 0: raise ValueError
                 return v
             except ValueError:
-                self._log(f"⚠  Valeur invalide : « {name} ».")
+                self._log(f"⚠  valeur invalide : « {name} ».")
                 return None
 
         p1_top   = to_int(self.p1_top,   "Pipe 1 — limite haute")
@@ -934,29 +924,29 @@ class MainWindow(QMainWindow):
 
         # Validations
         if p1_bot <= p1_top:
-            self._log("⚠  Pipe 1 : la limite basse doit être > limite haute.")
+            self._log("⚠  pipe 1 : la limite basse doit être > limite haute.")
             return None
         if p1_right <= p1_left:
-            self._log("⚠  Pipe 1 : la limite droite doit être > limite gauche.")
+            self._log("⚠  pipe 1 : la limite droite doit être > limite gauche.")
             return None
         if p2_bot <= p2_top:
-            self._log("⚠  Pipe 2 : la limite basse doit être > limite haute.")
+            self._log("⚠  pipe 2 : la limite basse doit être > limite haute.")
             return None
         if p2_right <= p2_left:
-            self._log("⚠  Pipe 2 : la limite droite doit être > limite gauche.")
+            self._log("⚠  pipe 2 : la limite droite doit être > limite gauche.")
             return None
         if p1_bs < 1 or p1_bs > 8:
-            self._log("⚠  Pipe 1 : la taille de bloc doit être entre 1 et 8.")
+            self._log("⚠  pipe 1 : la taille de bloc doit être entre 1 et 8.")
             return None
         if p2_bs < 1:
-            self._log("⚠  Pipe 2 : la taille de bloc doit être ≥ 1.")
+            self._log("⚠  pipe 2 : la taille de bloc doit être ≥ 1.")
             return None
 
         # Calcul decimation pipe 2
         dec2, ds2 = compute_pipe2_params(p2_bs)
         if dec2 is None:
             self._log(
-                f"⚠  Pipe 2 : taille de bloc {p2_bs} invalide — aucune combinaison "
+                f"⚠  pipe 2 : taille de bloc {p2_bs} invalide — aucune combinaison "
                 f"décimation/downsize possible (downsize doit être ≤ 8)."
             )
             return None
@@ -988,7 +978,6 @@ class MainWindow(QMainWindow):
         self._dt_timer.stop()
         self._stop_worker()
         event.accept()
-
 
 # =============================================================================
 #  Lancement
