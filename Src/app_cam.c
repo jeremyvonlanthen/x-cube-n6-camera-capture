@@ -164,24 +164,28 @@ static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int s
     CAM_EnableYuv(DCMIPP_PIPE1);
 }
 
-/* Reconfigures PIPE1 ONLY (pixel packer format + full-frame crop), without
- * touching the sensor: exposure/gain/ISP state are preserved, so no AE
- * warmup is needed afterwards.  Used to grab a full-sensor COLOR snapshot
- * while the camera runs in detect (mono, cropped/downsized) mode.
+/* Reconfigures PIPE1 ONLY (pixel packer format + full-scene downscale),
+ * without touching the sensor: exposure/gain/ISP state are preserved, so no
+ * AE warmup is needed afterwards.  Used to grab a COLOR snapshot while the
+ * camera runs in detect (mono, cropped/downsized) mode.
+ *   sensor_width/height : the ROI source (full sensor) -> keeps full field of view
+ *   out_width/height    : the pipe output size (<= sensor) -> DCMIPP downscales
+ * Passing out == sensor gives a 1:1 full-sensor grab.
  * The pipe must be stopped (snapshot mode) when calling this. */
-void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height, int output_format)
+void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height,
+                         int out_width, int out_height, int output_format)
 {
   CAM_conf_t conf;
 
-  conf.capture_width        = sensor_width;
-  conf.capture_height       = sensor_height;
+  conf.capture_width        = out_width;
+  conf.capture_height       = out_height;
   conf.fps                  = 0; /* unused by the pipe config */
   conf.dcmipp_output_format = output_format;
   conf.is_rgb_swap          = 0;
 
-  /* Full-frame ROI (ratio 1:1), sets format/pitch and re-enables the YUV
-   * conversion when needed; overrides any crop/downsize set by the detect
-   * configuration. */
+  /* ROI = full sensor, output = out_width x out_height: CAM_InitCropConfig
+   * keeps the aspect ratio and DCMIPP downscales the whole scene (not a crop).
+   * Re-enables YUV conversion when needed; overrides any detect crop/downsize. */
   DCMIPP_PipeInitCapture(&conf, sensor_width, sensor_height, &conf, 0);
 }
 

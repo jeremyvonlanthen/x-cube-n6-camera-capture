@@ -20,10 +20,12 @@
  * Camera helpers
  * ========================================================================== */
 
-/* (Re)initializes the camera at full resolution with the requested DCMIPP
- * output format, then lets the AE/ISP converge for WARMUP_FRAMES_TARGET
- * frames before stopping the pipe(s). */
-void camera_warmup(uint32_t output_format)
+/* (Re)initializes the camera at the requested capture resolution (full-scene
+ * downscale from the sensor) and DCMIPP output format, then lets the AE/ISP
+ * converge for WARMUP_FRAMES_TARGET frames before stopping the pipe(s).
+ *   cap_w/cap_h : pipe output size (SENSOR_WIDTH x SENSOR_HEIGHT for both the
+ *                 config preview and detect warmup). */
+void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
 {
 	static int camera_initialized = 0;
 
@@ -32,8 +34,8 @@ void camera_warmup(uint32_t output_format)
 
   if(camera_initialized) CAM_Deinit();
 
-  cam_conf.capture_width        = SENSOR_WIDTH;
-  cam_conf.capture_height       = SENSOR_HEIGHT;
+  cam_conf.capture_width        = cap_w;
+  cam_conf.capture_height       = cap_h;
   cam_conf.fps                  = SENSOR_WARMUP_FPS;
   cam_conf.dcmipp_output_format = output_format;
   cam_conf.is_rgb_swap          = 0;
@@ -61,8 +63,8 @@ void camera_warmup(uint32_t output_format)
   camera_initialized = 1;
 }
 
-/* One full-resolution YUV422 snapshot (config mode), JPEG-encoded and sent
- * to the GUI over UART */
+/* One full-sensor YUV422 snapshot (config mode), JPEG-encoded and sent to the
+ * GUI over UART (kept at full resolution for accurate crop-region framing) */
 int capture_yuv(void)
 {
   snapshot_in_progress = 1;

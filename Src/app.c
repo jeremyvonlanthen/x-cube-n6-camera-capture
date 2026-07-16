@@ -200,7 +200,7 @@ void app_run(void)
 		case CONFIG_MODE_WARMUP:
 			printf("[FSM] config mode warmup... (%d frames @ %d fps)\r\n",
 					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
+			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 			printf("[FSM] config warmup ended\r\n");
 
 			state = SEND_YUV_FRAME;
@@ -247,7 +247,7 @@ void app_run(void)
 		case DETECT_MODE_WARMUP:
 			printf("[FSM] detection mode warmup... (%d frames @ %d fps)\r\n",
 					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
+			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 			printf("[FSM] detection warmup ended\r\n");
 
 			state = PIPES_CONFIGURATION;

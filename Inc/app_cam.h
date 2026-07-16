@@ -34,6 +34,7 @@ void CAM_IspUpdate(void);
 void CAM_Deinit(void);
 /* Reconfigure pipe1 alone (full-frame, given format) without touching the
  * sensor — no AE warmup needed.  See app_cam.c. */
-void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height, int output_format);
+void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height,
+                         int out_width, int out_height, int output_format);
 
 #endif

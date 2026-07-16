@@ -28,8 +28,8 @@
 #include "utils.h"
 #include "ewl.h"
 
-#define VENC_ALLOCATOR_SIZE (4 * 1024 * 1024)
-#define EWL_HEAP_POOL_SIZE  (64 * 1024)
+#define VENC_ALLOCATOR_SIZE (4800 * 1024)   /* 4.6875 MB: H264 recon+ref frames (max that fits PSRAM w/ 1MB JPEG buffer) */
+#define EWL_HEAP_POOL_SIZE  (256 * 1024)  /* control structs; scales with resolution (MB count) */
 #define RATE_CTRL_QP 25
 
 enum {

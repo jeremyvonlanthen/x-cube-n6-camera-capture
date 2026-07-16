@@ -23,9 +23,16 @@
 #include "task.h"
 
 /* H264 recording configuration (module-private) */
-#define H264_WIDTH            1280
-#define H264_HEIGHT           720
-#define H264_FPS              20
+/* Video resolution: change H264_HEIGHT ONLY, the width is derived in 4:3.
+ * Recommended heights (both dims multiple of 16, cleanest for the H264
+ * macroblocks): 480 (640x480), 720 (960x720), 768 (1024x768),
+ * 960 (1280x960), 1200 (1600x1200).
+ * 1080 (1440x1080) also works (the encoder pads the height to 1088).
+ * Upper bound: 2*H264_FRAME_BYTES must stay < MAX_CAPTURE_FRAME_SIZE
+ * (~9.6 MB) since two capture frames live in buffer_full_frame; 1200 max. */
+#define H264_HEIGHT           1080
+#define H264_WIDTH            (H264_HEIGHT * 4 / 3)
+#define H264_FPS              30
 #define H264_RECORD_SECONDS   10
 #define H264_VENC_OUT_SIZE    (255 * 1024)
 #define H264_FRAME_BYTES      (H264_WIDTH * H264_HEIGHT * 2)
@@ -68,14 +75,15 @@ void record_jpeg_sd(const char *timestamp)
 
   snprintf(fname, sizeof(fname), "%s.jpg", timestamp);
 
-  /* Full-sensor COLOR snapshot while the camera runs in detect (mono,
-   * cropped/downsized) mode: reconfigure PIPE1 ONLY to full-frame YUV422.
-   * The sensor is untouched, so the AE/exposure already converged during
-   * the detect warmup stay valid -> no delay, color is immediate.
-   * No restore needed: record_h264_sd() reconfigures the camera right
-   * after, and DETECT_MODE_WARMUP + PIPES_CONFIGURATION re-apply the
-   * detect setup once the recording is done. */
-  CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
+  /* COLOR snapshot while the camera runs in detect (mono, cropped/downsized)
+   * mode: reconfigure PIPE1 ONLY to a full-scene PHOTO_WIDTH x PHOTO_HEIGHT
+   * YUV422 downscale (ROI = full sensor).  The sensor is untouched, so the
+   * AE/exposure converged during the detect warmup stay valid -> no delay,
+   * color is immediate.  No restore needed: record_h264_sd() reconfigures the
+   * camera right after, and DETECT_MODE_WARMUP + PIPES_CONFIGURATION re-apply
+   * the detect setup once the recording is done. */
+  CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
+                      PHOTO_WIDTH, PHOTO_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
   snapshot_in_progress = 1;
@@ -95,11 +103,11 @@ void record_jpeg_sd(const char *timestamp)
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
 
-  /* Hardware JPEG encode: pipe1 was switched to full-frame YUV422 above */
-  jpg_conf.width      = SENSOR_WIDTH;
-  jpg_conf.height     = SENSOR_HEIGHT;
+  /* Hardware JPEG encode: pipe1 was switched to PHOTO_WIDTH x PHOTO_HEIGHT above */
+  jpg_conf.width      = PHOTO_WIDTH;
+  jpg_conf.height     = PHOTO_HEIGHT;
   jpg_conf.fmt_src    = JPG_SRC_YUV422; //JPG_SRC_GREY;
-  jpg_conf.full_width = SENSOR_WIDTH;
+  jpg_conf.full_width = PHOTO_WIDTH;
   JPG_Init(&jpg_conf);
   jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_full_frame,
                         MAX_JPEG_FRAME_SIZE, MAX_CAPTURE_FRAME_SIZE);

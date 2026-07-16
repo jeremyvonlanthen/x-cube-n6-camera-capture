@@ -87,11 +87,12 @@ int JPG_Encode(uint8_t *p_dst, uint8_t *p_src, int dst_size, int src_size)
                                 mcu_row_buffer, real_mcu_bytes,  // ← taille réelle
                                 p_dst, dst_size);
   } else {
+      uint32_t real_mcu_bytes = ((ctx->conf.width + 15) / 16) * 256;
       CVT_FormatYuv422ToYuv422Jpeg_Row(mcu_row_buffer, p_src,
                                         ctx->conf.width, ctx->conf.height,
                                         0, MIN(8, ctx->conf.height));
       ret = HAL_JPEG_Encode_IT(&ctx->hjpeg,
-                                mcu_row_buffer, MCU_ROW_BYTES_YUV,
+                                mcu_row_buffer, real_mcu_bytes,  // ← taille réelle par largeur
                                 p_dst, dst_size);
   }
 
@@ -127,10 +128,11 @@ void HAL_JPEG_GetDataCallback(JPEG_HandleTypeDef *hjpeg, uint32_t NbDecodedData)
                                     ctx->current_row, remain_height, ctx->conf.full_width);
       HAL_JPEG_ConfigInputBuffer(hjpeg, mcu_row_buffer, real_mcu_bytes);  // ← taille réelle
   } else {
+      uint32_t real_mcu_bytes = ((ctx->conf.width + 15) / 16) * 256;
       CVT_FormatYuv422ToYuv422Jpeg_Row(mcu_row_buffer, ctx->p_src,
                                         ctx->conf.width, ctx->conf.height,
                                         ctx->current_row, remain_height);
-      HAL_JPEG_ConfigInputBuffer(hjpeg, mcu_row_buffer, MCU_ROW_BYTES_YUV);
+      HAL_JPEG_ConfigInputBuffer(hjpeg, mcu_row_buffer, real_mcu_bytes);
   }
 }
 
