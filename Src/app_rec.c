@@ -383,6 +383,7 @@ static void rec_task_fct(void *arg)
 /* ------------------------------------------------------------------------ */
 int REC_Init(void)
 {
+  static int rtos_done = 0;   /* FreeRTOS objects created only once */
   RCC_PeriphCLKInitTypeDef clk = { 0 };
   FRESULT res;
   int ret;
@@ -396,6 +397,13 @@ int REC_Init(void)
   if (HAL_RCCEx_PeriphCLKConfig(&clk) != HAL_OK) return -3;
 
   /* BSP SD init (SDMMC2, 4-bit, high speed).  Handles RIF config itself. */
+  /* Recover from a hot-removal: reset the HAL SD handle so BSP_SD_Init
+   * redoes a full, clean card identification.  BSP_SD_DeInit cannot be used
+   * (it bails on HAL_EXTI_ClearConfigLine since the detect EXTI isn't set
+   * up).  Skipped on the very first boot (handle not yet initialized). */
+  if (hsd_sdmmc[0].Instance != NULL) {
+    HAL_SD_DeInit(&hsd_sdmmc[0]);
+  }
   ret = BSP_SD_Init(0);
   if (ret != BSP_ERROR_NONE) return -2;
 
@@ -419,13 +427,19 @@ int REC_Init(void)
     }
   }
 
-  /* FreeRTOS objects */
-  q_filled = xQueueCreateStatic(REC_MSG_NB, sizeof(rec_msg_t),
-                                &q_filled_storage[0][0], &q_filled_struct);
-  sem_stopped = xSemaphoreCreateBinaryStatic(&sem_stopped_struct);
+  /* FreeRTOS objects: created ONCE.  On a re-mount (hot-removal / USER1
+   * restart) we must NOT recreate the queue/semaphore/writer task on the
+   * same static storage — that corrupts FreeRTOS and HardFaults on the
+   * next SD write. */
+  if (!rtos_done) {
+    q_filled = xQueueCreateStatic(REC_MSG_NB, sizeof(rec_msg_t),
+                                  &q_filled_storage[0][0], &q_filled_struct);
+    sem_stopped = xSemaphoreCreateBinaryStatic(&sem_stopped_struct);
 
-  xTaskCreateStatic(rec_task_fct, "sd_rec", REC_TASK_STACK_SIZE, NULL,
-                    REC_TASK_PRIORITY, rec_task_stack, &rec_task_tcb);
+    xTaskCreateStatic(rec_task_fct, "sd_rec", REC_TASK_STACK_SIZE, NULL,
+                      REC_TASK_PRIORITY, rec_task_stack, &rec_task_tcb);
+    rtos_done = 1;
+  }
 
   return 0;
 }
