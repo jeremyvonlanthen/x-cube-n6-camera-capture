@@ -28,7 +28,6 @@
  * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
  * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
 #define H264_FPS              30
-#define H264_RECORD_SECONDS   10
 #define H264_VENC_OUT_SIZE    (255 * 1024)
 #define H264_AE_WARMUP_FRAMES 20
 #define H264_MAX_HEIGHT       1080     /* do not exceed: pools sized for this */
@@ -69,6 +68,8 @@ void record_jpeg_sd(const char *timestamp, int height)
   char fname[40];
   int jpeg_len;
   uint32_t start;
+
+  snprintf(fname, sizeof(fname), "%s.jpg", timestamp);
 
   /* COLOR snapshot while the camera runs in detect (mono, cropped/downsized)
    * mode: reconfigure PIPE1 ONLY to a full-scene width x height YUV422
@@ -119,11 +120,11 @@ void record_jpeg_sd(const char *timestamp, int height)
     printf("[REC] snapshot save FAILED\r\n");
 }
 
-/* Records H264_RECORD_SECONDS seconds of (height*4/3)x(height)@fps H264 video
+/* Records rec_duration seconds of (height*4/3)x(height)@fps H264 video
  * into a new <timestamp>.mp4 on the SD card, then restores the camera state
  * (clears warmup_done so the current mode re-enters from scratch).
  *   height : 4:3 video height, must be <= H264_MAX_HEIGHT (width is derived). */
-void record_h264_sd(const char *timestamp, int height)
+void record_h264_sd(const char *timestamp, int height, int rec_duration)
 {
   /* LL_VENC_Init and ENC_Init must each be called exactly once —
    * ENC_DeInit crashes on this target.  Init once on first entry,
@@ -136,6 +137,7 @@ void record_h264_sd(const char *timestamp, int height)
   ENC_Conf_t enc_conf;
   char fname[40];
 
+  snprintf(fname, sizeof(fname), "%s.mp4", timestamp);
   assert(height <= H264_MAX_HEIGHT);  /* encoder pools sized for this max */
 
   /* Switch camera to width x height RGB565 @ H264_FPS for H264 (full-scene
@@ -217,15 +219,15 @@ void record_h264_sd(const char *timestamp, int height)
       }
     }
   }
-  printf("[REC] recording started (%d sec @ %d fps)...\r\n", H264_RECORD_SECONDS, H264_FPS);
+  printf("[REC] recording started (%d sec @ %d fps)...\r\n", rec_duration, H264_FPS);
 
-  /* Record for H264_RECORD_SECONDS seconds */
+  /* Record for rec_duration seconds */
   uint32_t start_tick = HAL_GetTick();
   uint32_t last_frame_tick = start_tick;
   uint32_t frame_count = 0;
   uint32_t encode_ok_count = 0;
 
-  while (HAL_GetTick() - start_tick < (uint32_t)(H264_RECORD_SECONDS * 1000)) {
+  while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {
     if (!h264_frame_ready) {
       vTaskDelay(pdMS_TO_TICKS(1));
       continue;

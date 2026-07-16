@@ -280,8 +280,8 @@ void app_run(void)
 			char timestamp[20];
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
 
-			record_jpeg_sd(timestamp, 1080); //jpg height 4:3 : 480, 720, 960, 1080 ... 1944 (full res.)
-			record_h264_sd(timestamp, 1080); //mp4 height 4:3 : 480, 720, 960, 1080 (max)
+			record_jpeg_sd(timestamp, 1080);    //jpg height: 480, 720, 960, 1080...1944 (full res.)
+			record_h264_sd(timestamp, 1080, 8); //mp4 height: 480, 720, 960, 1080 (max) / video length (sec)
 
 			state = DETECT_MODE_WARMUP;
 			break;

@@ -41,9 +41,14 @@ void rtc_make_timestamp(char *buf, size_t n)
   RTC_TimeTypeDef t = { 0 };
   RTC_DateTypeDef d = { 0 };
 
-  if (!rtc_ready) return;
-
+  if (!rtc_ready) {
+		snprintf(buf, n, "REC_%08lu", (unsigned long)HAL_GetTick());
+		return;
+	}
 
   HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN);
+
+  snprintf(buf, n, "%04u-%02u-%02u_%02u-%02u-%02u",
+					 2000 + d.Year, d.Month, d.Date, t.Hours, t.Minutes, t.Seconds);
 }
