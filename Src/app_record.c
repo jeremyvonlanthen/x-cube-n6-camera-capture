@@ -22,21 +22,16 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* H264 recording configuration (module-private) */
-/* Video resolution: change H264_HEIGHT ONLY, the width is derived in 4:3.
- * Recommended heights (both dims multiple of 16, cleanest for the H264
- * macroblocks): 480 (640x480), 720 (960x720), 768 (1024x768),
- * 960 (1280x960), 1200 (1600x1200).
- * 1080 (1440x1080) also works (the encoder pads the height to 1088).
- * Upper bound: 2*H264_FRAME_BYTES must stay < MAX_CAPTURE_FRAME_SIZE
- * (~9.6 MB) since two capture frames live in buffer_full_frame; 1200 max. */
-#define H264_HEIGHT           1080
-#define H264_WIDTH            (H264_HEIGHT * 4 / 3)
+/* H264 recording configuration (module-private).
+ * The video resolution (4:3) is passed to record_h264_sd() as its 'height'
+ * argument; the width is derived (height * 4 / 3).  The height must stay
+ * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
+ * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
 #define H264_FPS              30
 #define H264_RECORD_SECONDS   10
 #define H264_VENC_OUT_SIZE    (255 * 1024)
-#define H264_FRAME_BYTES      (H264_WIDTH * H264_HEIGHT * 2)
 #define H264_AE_WARMUP_FRAMES 20
+#define H264_MAX_HEIGHT       1080     /* do not exceed: pools sized for this */
 
 /* VENC hardware output buffer (module-private) */
 static uint8_t h264_venc_out[H264_VENC_OUT_SIZE] ALIGN_32 IN_PSRAM;
@@ -63,27 +58,27 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
   return res;
 }
 
-/* Takes one full-resolution snapshot (camera is still in the post-warmup
- * configuration), encodes it to JPEG (hardware) and saves it to the SD
- * card as IMG_xxxx.JPG through the FreeRTOS SD writer task (app_rec.c).
- * Called on the TAMP button, right before record_h264_sd(). */
-void record_jpeg_sd(const char *timestamp)
+/* Takes one snapshot (camera is still in the post-warmup configuration),
+ * encodes it to JPEG (hardware) and saves it to the SD card as
+ * <timestamp>.jpg through the FreeRTOS SD writer task (app_rec.c).
+ * Called on the TAMP button, right before record_h264_sd().
+ *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res). */
+void record_jpeg_sd(const char *timestamp, int height)
 {
+  int width = height * 4 / 3;      /* 4:3, full-scene downscale from sensor */
   char fname[40];
   int jpeg_len;
   uint32_t start;
 
-  snprintf(fname, sizeof(fname), "%s.jpg", timestamp);
-
   /* COLOR snapshot while the camera runs in detect (mono, cropped/downsized)
-   * mode: reconfigure PIPE1 ONLY to a full-scene PHOTO_WIDTH x PHOTO_HEIGHT
-   * YUV422 downscale (ROI = full sensor).  The sensor is untouched, so the
+   * mode: reconfigure PIPE1 ONLY to a full-scene width x height YUV422
+   * downscale (ROI = full sensor).  The sensor is untouched, so the
    * AE/exposure converged during the detect warmup stay valid -> no delay,
    * color is immediate.  No restore needed: record_h264_sd() reconfigures the
    * camera right after, and DETECT_MODE_WARMUP + PIPES_CONFIGURATION re-apply
    * the detect setup once the recording is done. */
   CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
-                      PHOTO_WIDTH, PHOTO_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
+                      width, height, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
   snapshot_in_progress = 1;
@@ -103,11 +98,11 @@ void record_jpeg_sd(const char *timestamp)
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
 
-  /* Hardware JPEG encode: pipe1 was switched to PHOTO_WIDTH x PHOTO_HEIGHT above */
-  jpg_conf.width      = PHOTO_WIDTH;
-  jpg_conf.height     = PHOTO_HEIGHT;
+  /* Hardware JPEG encode: pipe1 was switched to width x height above */
+  jpg_conf.width      = width;
+  jpg_conf.height     = height;
   jpg_conf.fmt_src    = JPG_SRC_YUV422; //JPG_SRC_GREY;
-  jpg_conf.full_width = PHOTO_WIDTH;
+  jpg_conf.full_width = width;
   JPG_Init(&jpg_conf);
   jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_full_frame,
                         MAX_JPEG_FRAME_SIZE, MAX_CAPTURE_FRAME_SIZE);
@@ -124,29 +119,33 @@ void record_jpeg_sd(const char *timestamp)
     printf("[REC] snapshot save FAILED\r\n");
 }
 
-/* Records H264_RECORD_SECONDS seconds of 1280x720@30 H264 video into a new
- * VID_xxxx.MP4 on the SD card, then restores the camera state (clears
- * warmup_done so the current mode re-enters from scratch). */
-void record_h264_sd(const char *timestamp)
+/* Records H264_RECORD_SECONDS seconds of (height*4/3)x(height)@fps H264 video
+ * into a new <timestamp>.mp4 on the SD card, then restores the camera state
+ * (clears warmup_done so the current mode re-enters from scratch).
+ *   height : 4:3 video height, must be <= H264_MAX_HEIGHT (width is derived). */
+void record_h264_sd(const char *timestamp, int height)
 {
   /* LL_VENC_Init and ENC_Init must each be called exactly once —
    * ENC_DeInit crashes on this target.  Init once on first entry,
    * reuse on every subsequent call (same pattern as the USB phase). */
   static int hw_initialized = 0;
 
+  int width = height * 4 / 3;                                 /* 4:3 */
+  uint32_t frame_bytes = (uint32_t)width * (uint32_t)height * 2u; /* RGB565 */
   CAM_conf_t cam_conf = { 0 };
   ENC_Conf_t enc_conf;
   char fname[40];
 
-  snprintf(fname, sizeof(fname), "%s.mp4", timestamp);
+  assert(height <= H264_MAX_HEIGHT);  /* encoder pools sized for this max */
 
-  /* Switch camera to 1280x720 RGB565 @ 30 fps for H264.
+  /* Switch camera to width x height RGB565 @ H264_FPS for H264 (full-scene
+   * downscale from the sensor).
    * RGB565 (2 B/px) halves PSRAM bandwidth vs ARGB8888: fixes DCMIPP
    * pixel-packer overruns (right-side line artifacts).  Encoder preproc
    * is set to H264ENC_RGB565 accordingly (app_enc.c). */
   CAM_Deinit();
-  cam_conf.capture_width        = H264_WIDTH;
-  cam_conf.capture_height       = H264_HEIGHT;
+  cam_conf.capture_width        = width;
+  cam_conf.capture_height       = height;
   cam_conf.fps                  = H264_FPS;
   cam_conf.dcmipp_output_format = DCMIPP_PIXEL_PACKER_FORMAT_RGB565_1;
   cam_conf.is_rgb_swap          = 0;
@@ -159,8 +158,8 @@ void record_h264_sd(const char *timestamp)
 
     /* H264 software encoder */
     ENC_ResetAllocator();
-    enc_conf.width  = H264_WIDTH;
-    enc_conf.height = H264_HEIGHT;
+    enc_conf.width  = width;
+    enc_conf.height = height;
     enc_conf.fps    = H264_FPS;
     ENC_Init(&enc_conf);
 
@@ -182,9 +181,9 @@ void record_h264_sd(const char *timestamp)
    * frames (2 x 1.84 MB) of buffer_full_frame (sized 9.7 MB for the
    * full-res config mode) — the remaining ~6 MB buffer several seconds
    * of encoded video, absorbing long SD card pauses without dropping. */
-  if (REC_Start(H264_WIDTH, H264_HEIGHT, H264_FPS,
-                buffer_full_frame + 2 * H264_FRAME_BYTES,
-                MAX_CAPTURE_FRAME_SIZE - 2 * H264_FRAME_BYTES,
+  if (REC_Start(width, height, H264_FPS,
+                buffer_full_frame + 2 * frame_bytes,
+                MAX_CAPTURE_FRAME_SIZE - 2 * frame_bytes,
                 fname) != 0) {
     printf("[REC] record start failed, recording aborted\r\n");
     warmup_done = 0;
@@ -199,7 +198,7 @@ void record_h264_sd(const char *timestamp)
   {
     int ret = CMW_CAMERA_DoubleBufferStart(DCMIPP_PIPE1,
                                            buffer_full_frame,
-                                           buffer_full_frame + H264_FRAME_BYTES,
+                                           buffer_full_frame + frame_bytes,
                                            CMW_MODE_CONTINUOUS);
     assert(ret == CMW_ERROR_NONE);
   }

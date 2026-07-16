@@ -18,14 +18,6 @@
 #define SENSOR_WARMUP_FPS     10
 #define WARMUP_FRAMES_TARGET  60      /* frames skipped so the AE/ISP converge */
 
-/* SD photo (snapshot) resolution, 4:3, full-scene downscale from the sensor.
- * Change PHOTO_HEIGHT only; the width is derived. Heights recommended (both
- * dims multiple of 16): 720 (960x720), 768 (1024x768), 960 (1280x960),
- * 1080 (1440x1080). Max = sensor 1944 (2592x1944, i.e. full resolution).
- * (The GUI preview stays at full sensor for accurate crop framing.) */
-#define PHOTO_HEIGHT          1080
-#define PHOTO_WIDTH           (PHOTO_HEIGHT * 4 / 3)
-
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)
 
