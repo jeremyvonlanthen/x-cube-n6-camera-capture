@@ -793,9 +793,10 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
 
 void BSP_PB_Callback(Button_TypeDef Button)
 {
-  if(Button == BUTTON_USER1)
-  	state >= CONFIG_MODE_WARMUP ?
-			state = CONFIG_MODE_WARMUP : printf("[FSM] restart from config mode warmup not yet available\r\n");
+  if(Button == BUTTON_USER1){
+  	state = SD_CARD;
+  	printf("[FSM] RESTART OF THE CONFIG PROCEDURE...\r\n");
+  }
 }
 
 /* ==========================================================================
@@ -867,9 +868,10 @@ void app_run(void)
 			break;
 
 		case CONFIG_MODE_WARMUP:
-			printf("[FSM] config mode warmup...\r\n");
+			printf("[FSM] config mode warmup... (%d frames @ %d fps)\r\n",
+					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
-			printf("[FSM] warmup ended\r\n");
+			printf("[FSM] config warmup ended\r\n");
 
 			state = SEND_YUV_FRAME;
 			printf("[FSM] wait for send yuv frame... (capturer une image)\r\n");
@@ -913,9 +915,10 @@ void app_run(void)
 			break;
 
 		case DETECT_MODE_WARMUP:
-			printf("[FSM] detection mode warmup...\r\n");
+			printf("[FSM] detection mode warmup... (%d frames @ %d fps)\r\n",
+					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
-			printf("[FSM] warmup ended\r\n");
+			printf("[FSM] detection warmup ended\r\n");
 
 			state = PIPES_CONFIGURATION;
 			break;

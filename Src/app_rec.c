@@ -405,6 +405,20 @@ int REC_Init(void)
 
   printf("[uSD] uSD mounted and detected (FAT type %d)\r\n", fs.fs_type);
 
+  /* Total and free space (f_getfree scans the FAT: can take 100s of ms).
+   * 512 bytes/sector => 2048 sectors = 1 MB. */
+  {
+    FATFS *pfs;
+    DWORD  fre_clust;
+    if (f_getfree("", &fre_clust, &pfs) == FR_OK) {
+      uint64_t tot_sect = (uint64_t)(pfs->n_fatent - 2) * pfs->csize;
+      uint64_t fre_sect = (uint64_t)fre_clust * pfs->csize;
+      printf("[uSD] total %lu MB, free %lu MB (%d %%)\r\n",
+             (unsigned long)(tot_sect / 2048u), (unsigned long)(fre_sect / 2048u),
+             (unsigned int)(fre_sect*100/tot_sect));
+    }
+  }
+
   /* FreeRTOS objects */
   q_filled = xQueueCreateStatic(REC_MSG_NB, sizeof(rec_msg_t),
                                 &q_filled_storage[0][0], &q_filled_struct);
