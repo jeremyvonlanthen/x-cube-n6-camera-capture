@@ -12,7 +12,7 @@
  *     the Python GUI over UART (Config_t)
  *
  * app_run() runs the DIAS state machine, on top of the helpers
- * (check_SD / app_mode_config_run).
+ * (SD_init / app_mode_config_run).
  ******************************************************************************
  * @attention
  *
@@ -46,6 +46,7 @@
 #include "stm32n6xx_ll_venc.h"
 #ifdef STM32N6570_DK_REV
 #include "stm32n6570_discovery.h"
+#include "stm32n6570_discovery_sd.h"
 #else
 #include "stm32n6xx_nucleo.h"
 #endif
@@ -126,6 +127,8 @@ typedef enum
 extern UART_HandleTypeDef huart1;
 extern DCMIPP_HandleTypeDef hcamera_dcmipp;
 extern volatile uint32_t dcmipp_err_count;
+extern RTC_HandleTypeDef hrtc;   /* defined in main.c (RTC_Config) */
+extern volatile int rtc_ready;   /* defined in main.c */
 
 /* Configuration received from the Python GUI */
 static Config_t config_py = { 0 };
@@ -169,11 +172,6 @@ static volatile int force_intra = 0;
  * same pattern as the ST VENC_SDCard example). */
 static uint8_t * volatile h264_ready_buf = NULL;
 
-/* RTC (clocked on the internal LSI) used to build timestamped file names.
- * The wall-clock value is set by the Python GUI over UART (command 'T'). */
-static RTC_HandleTypeDef hrtc;
-static volatile int rtc_ready = 0;   /* 1 once HAL_RTC_Init succeeded */
-
 /* ==========================================================================
  * Console & memory helpers
  * ========================================================================== */
@@ -211,62 +209,9 @@ static void *axisram_alloc(uint32_t size)
 }
 
 /* ==========================================================================
- * RTC (timestamped file names)
+ * RTC helpers (timestamped file names).  The RTC is configured in main.c
+ * (RTC_Config); hrtc and rtc_ready are defined there.
  * ========================================================================== */
-
-/* Initializes the RTC on the internal LSI (~32 kHz: no external crystal
- * required).  Non-fatal: on any failure rtc_ready stays 0 and the timestamp
- * helper falls back to a HAL_GetTick-based name.  The actual date/time must be
- * pushed by the GUI (command 'T'); until then the calendar counts from its
- * power-on default. */
-static void rtc_init(void)
-{
-  RCC_OscInitTypeDef osc = { 0 };
-  RCC_PeriphCLKInitTypeDef pclk = { 0 };
-
-  HAL_PWR_EnableBkUpAccess();
-
-  /* Enable LSI (leave the PLLs untouched) */
-  osc.OscillatorType = RCC_OSCILLATORTYPE_LSI;
-  osc.LSIState       = RCC_LSI_ON;
-  osc.PLL1.PLLState  = RCC_PLL_NONE;
-  osc.PLL2.PLLState  = RCC_PLL_NONE;
-  osc.PLL3.PLLState  = RCC_PLL_NONE;
-  osc.PLL4.PLLState  = RCC_PLL_NONE;
-  if (HAL_RCC_OscConfig(&osc) != HAL_OK) {
-    printf("[RTC] LSI enable failed\r\n");
-    return;
-  }
-
-  /* Route LSI to the RTC */
-  pclk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-  pclk.RTCClockSelection    = RCC_RTCCLKSOURCE_LSI;
-  if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK) {
-    printf("[RTC] clock select failed\r\n");
-    return;
-  }
-
-  __HAL_RCC_RTC_ENABLE();
-  __HAL_RCC_RTCAPB_CLK_ENABLE();
-
-  /* LSI ~32 kHz -> (127+1) * (249+1) = 32000 for a 1 Hz calendar tick */
-  hrtc.Instance            = RTC;
-  hrtc.Init.HourFormat     = RTC_HOURFORMAT_24;
-  hrtc.Init.AsynchPrediv   = 127;
-  hrtc.Init.SynchPrediv    = 249;
-  hrtc.Init.OutPut         = RTC_OUTPUT_DISABLE;
-  hrtc.Init.OutPutRemap    = RTC_OUTPUT_REMAP_NONE;
-  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-  hrtc.Init.OutPutType     = RTC_OUTPUT_TYPE_OPENDRAIN;
-  hrtc.Init.OutPutPullUp   = RTC_OUTPUT_PULLUP_NONE;
-  hrtc.Init.BinMode        = RTC_BINARY_NONE;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK) {
-    printf("[RTC] HAL_RTC_Init failed\r\n");
-    return;
-  }
-
-  rtc_ready = 1;
-}
 
 /* Sets the RTC calendar from a 6-byte payload (year-2000, month, day, hour,
  * minute, second) received from the GUI. */
@@ -278,10 +223,10 @@ static void rtc_set_datetime(const uint8_t dt[6])
   if (!rtc_ready)
     return;
 
-  d.Year    = dt[0];             /* years since 2000 */
-  d.Month   = dt[1];             /* 1..12 */
-  d.Date    = dt[2];             /* 1..31 */
-  d.WeekDay = RTC_WEEKDAY_MONDAY; /* unused for naming */
+  d.Year    = dt[0];
+  d.Month   = dt[1];
+  d.Date    = dt[2];
+  d.WeekDay = RTC_WEEKDAY_MONDAY;
   t.Hours   = dt[3];
   t.Minutes = dt[4];
   t.Seconds = dt[5];
@@ -292,9 +237,8 @@ static void rtc_set_datetime(const uint8_t dt[6])
          dt[0], dt[1], dt[2], dt[3], dt[4], dt[5]);
 }
 
-/* Writes a file-name-safe timestamp "AAAA-MM-JJ_HH-MM-SS" into buf (needs >= 20
- * bytes).  ':' is illegal in FAT names so it is replaced by '-', and the
- * space by '_'.  Falls back to a tick-based name if the RTC is not ready. */
+/* Writes a file-name-safe timestamp "AAAA-MM-JJ_HH-MM-SS" into buf (>= 20 B).
+ * Falls back to a tick-based name if the RTC is not ready. */
 static void rtc_make_timestamp(char *buf, size_t n)
 {
   RTC_TimeTypeDef t = { 0 };
@@ -305,7 +249,6 @@ static void rtc_make_timestamp(char *buf, size_t n)
     return;
   }
 
-  /* GetTime MUST be called before GetDate to unlock the shadow registers */
   HAL_RTC_GetTime(&hrtc, &t, RTC_FORMAT_BIN);
   HAL_RTC_GetDate(&hrtc, &d, RTC_FORMAT_BIN);
 
@@ -735,7 +678,7 @@ static void record_h264_sd(const char *timestamp)
       }
     }
   }
-  printf("[REC] recording ended: frames=%lu encOK=%lu dcmippErr=%lu\r\n",
+  printf("[REC] recording states: frames=%lu encOK=%lu dcmippErr=%lu\r\n",
          frame_count, encode_ok_count, (unsigned long)dcmipp_err_count);
 
   /* Stop the capture->encode pipeline */
@@ -805,7 +748,7 @@ void BSP_PB_Callback(Button_TypeDef Button)
 
 /* One-time peripheral init: LEDs, TAMP button (polling) and SD recorder
  * (SD card + FAT32 mount + FreeRTOS SD writer task). */
-int check_SD(void)
+int SD_init(void)
 {
 	int rec_ready = REC_Init();
 	switch(rec_ready)
@@ -850,9 +793,6 @@ void app_run(void)
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
 
-	/* RTC for timestamped file names (non-fatal if it fails) */
-	rtc_init();
-
 	while(1)
 	{
 		LED_mode();
@@ -860,7 +800,7 @@ void app_run(void)
 		switch(state)
 		{
 		case SD_CARD:
-			if(check_SD()){
+			if(SD_init()){
 				state = CONFIG_MODE_WARMUP;
 				break;
 			}
@@ -932,6 +872,12 @@ void app_run(void)
 			break;
 
 		case MOVEMENT_DETECTION:
+			if(BSP_SD_GetCardState(0) != SD_TRANSFER_OK){
+				printf("[uSD] uSD has been disconnected, config procedure restart...\r\n");
+				state = SD_CARD;
+				break;
+			}
+
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
 				printf("[FSM] movement detected!\r\n");
 				state = RECORDING;

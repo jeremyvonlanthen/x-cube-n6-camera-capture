@@ -111,8 +111,6 @@ void SDMMC2_IRQHandler(void)
 
 void HardFault_Handler(void)
 {
-//  printf("HardFault! HFSR=%08lX CFSR=%08lX BFAR=%08lX MMFAR=%08lX\n",
-//         SCB->HFSR, SCB->CFSR, SCB->BFAR, SCB->MMFAR);
   while(1);
 }
 
