@@ -222,6 +222,36 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app.c</locationURI>
 		</link>
 		<link>
+			<name>Src/app_rtc.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_rtc.c</locationURI>
+		</link>
+		<link>
+			<name>Src/app_uart.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_uart.c</locationURI>
+		</link>
+		<link>
+			<name>Src/app_capture.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_capture.c</locationURI>
+		</link>
+		<link>
+			<name>Src/app_pipes.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_pipes.c</locationURI>
+		</link>
+		<link>
+			<name>Src/app_record.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_record.c</locationURI>
+		</link>
+		<link>
+			<name>Src/app_callbacks.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_callbacks.c</locationURI>
+		</link>
+		<link>
 			<name>Src/app_cam.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_cam.c</locationURI>

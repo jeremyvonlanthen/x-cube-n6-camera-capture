@@ -62,6 +62,12 @@ C_SOURCES += Src/app_cam.c
 C_SOURCES += Src/app_enc.c
 C_SOURCES += Src/freertos_bsp.c
 C_SOURCES += Src/app_rec.c
+C_SOURCES += Src/app_rtc.c
+C_SOURCES += Src/app_uart.c
+C_SOURCES += Src/app_capture.c
+C_SOURCES += Src/app_pipes.c
+C_SOURCES += Src/app_record.c
+C_SOURCES += Src/app_callbacks.c
 C_SOURCES += Src/sd_diskio.c
 
 # ASM sources
