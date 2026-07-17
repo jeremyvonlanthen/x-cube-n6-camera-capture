@@ -225,7 +225,7 @@ class SerialWorker(QThread):
         try:
             ser = serial.Serial(self.port, UART_BAUDRATE, timeout=0.2)
         except serial.SerialException as e:
-            self.line_received.emit(f"[moniteur] ouverture impossible : {e}")
+            self.line_received.emit(f"[monitor] cannot open port: {e}")
             self.port_opened.emit(False)
             return
         self.port_opened.emit(True)
@@ -260,7 +260,7 @@ class SerialWorker(QThread):
                     time.sleep(0.3)
                     ser.write(arg); ser.flush()
                 except Exception as e:
-                    self.config_result.emit(False, f"Erreur série : {e}")
+                    self.config_result.emit(False, f"serial error: {e}")
                     continue
                 line = bytearray()
                 awaiting_ack = True
@@ -296,10 +296,10 @@ class SerialWorker(QThread):
                 awaiting_ack = False
                 if saw_fail:
                     self.config_result.emit(
-                        False, "⚠  Config refusée par le microcontrôleur (F).")
+                        False, "⚠  config rejected by the microcontroller (f).")
                 else:
                     self.config_result.emit(
-                        False, "⚠  Pas de réponse du microcontrôleur (timeout).")
+                        False, "⚠  no response from the microcontroller (timeout).")
 
         try:
             ser.close()
@@ -338,23 +338,23 @@ class SerialWorker(QThread):
                     pre.append(c)
             if not got_sync:
                 self.capture_error.emit(
-                    "Timeout — pas de sync reçu (le µC est-il en mode config ?).")
+                    "timeout: no sync received (is the mcu in config mode?).")
                 return
 
             ser.timeout = 60
             size_bytes = ser.read(4)
             if len(size_bytes) != 4:
-                self.capture_error.emit("Erreur de lecture de la taille JPEG.")
+                self.capture_error.emit("failed to read the jpeg size.")
                 return
             jpeg_size = int.from_bytes(size_bytes, 'little')
             if jpeg_size > 10_000_000:
-                self.capture_error.emit(f"Taille invalide : {jpeg_size} octets.")
+                self.capture_error.emit(f"invalid size: {jpeg_size} bytes.")
                 return
 
             ser.timeout = 30
             jpeg_data = ser.read(jpeg_size)
             if len(jpeg_data) != jpeg_size:
-                self.capture_error.emit("Données JPEG incomplètes.")
+                self.capture_error.emit("incomplete jpeg data.")
                 return
 
             exposure_us = 0
@@ -371,18 +371,18 @@ class SerialWorker(QThread):
             iso_approx  = int(100 * gain_linear)
 
             if jpeg_data[:2] != b'\xff\xd8':
-                self.capture_error.emit("JPEG corrompu.")
+                self.capture_error.emit("corrupted jpeg")
                 return
 
             img_pil = Image.open(BytesIO(jpeg_data))
             img_np  = np.array(img_pil.convert("RGB"), dtype=np.uint8)
-            desc = (f"exposition = {exposure_us} µs | gain = {gain_db:.1f} dB "
+            desc = (f"exposure = {exposure_us} µs | gain = {gain_db:.1f} db "
                     f"(≈ ISO {iso_approx})")
             self.image_received.emit(img_np, desc)
 
         except Exception as e:
             import traceback; traceback.print_exc()
-            self.capture_error.emit(f"Erreur : {e}")
+            self.capture_error.emit(f"error: {e}")
         finally:
             ser.timeout = 0.2         # rétablit le timeout de lecture continue
 
@@ -681,7 +681,7 @@ class MainWindow(QMainWindow):
         # Le µC signale qu'il attend une capture -> (ré)active "Capturer"
         if "wait for send yuv frame" in text:
             self._on_ready()
-        if "config mode warmup" in text:
+        if "RESTART OF THE CONFIG PROCEDURE" in text:
             self._on_config_warmup()
 
     def _on_ready(self):
@@ -897,57 +897,57 @@ class MainWindow(QMainWindow):
                 if v < 0: raise ValueError
                 return v
             except ValueError:
-                self._log(f"⚠  valeur invalide : « {name} ».")
+                self._log(f"⚠  invalid value: '{name}'.")
                 return None
 
-        p1_top   = to_int(self.p1_top,   "Pipe 1 — limite haute")
+        p1_top   = to_int(self.p1_top,   "pipe 1 — top limit")
         if p1_top   is None: return None
-        p1_bot   = to_int(self.p1_bot,   "Pipe 1 — limite basse")
+        p1_bot   = to_int(self.p1_bot,   "pipe 1 — bottom limit")
         if p1_bot   is None: return None
-        p1_left  = to_int(self.p1_left,  "Pipe 1 — limite gauche")
+        p1_left  = to_int(self.p1_left,  "pipe 1 — left limit")
         if p1_left  is None: return None
-        p1_right = to_int(self.p1_right, "Pipe 1 — limite droite")
+        p1_right = to_int(self.p1_right, "pipe 1 — right limit")
         if p1_right is None: return None
-        p1_bs    = to_int(self.p1_bs,    "Pipe 1 — taille bloc")
+        p1_bs    = to_int(self.p1_bs,    "pipe 1 — block size")
         if p1_bs    is None: return None
 
-        p2_top   = to_int(self.p2_top,   "Pipe 2 — limite haute")
+        p2_top   = to_int(self.p2_top,   "pipe 2 — top limit")
         if p2_top   is None: return None
-        p2_bot   = to_int(self.p2_bot,   "Pipe 2 — limite basse")
+        p2_bot   = to_int(self.p2_bot,   "pipe 2 — bottom limit")
         if p2_bot   is None: return None
-        p2_left  = to_int(self.p2_left,  "Pipe 2 — limite gauche")
+        p2_left  = to_int(self.p2_left,  "pipe 2 — left limit")
         if p2_left  is None: return None
-        p2_right = to_int(self.p2_right, "Pipe 2 — limite droite")
+        p2_right = to_int(self.p2_right, "pipe 2 — right limit")
         if p2_right is None: return None
-        p2_bs    = to_int(self.p2_bs,    "Pipe 2 — taille bloc")
+        p2_bs    = to_int(self.p2_bs,    "pipe 2 — block size")
         if p2_bs    is None: return None
 
         # Validations
         if p1_bot <= p1_top:
-            self._log("⚠  pipe 1 : la limite basse doit être > limite haute.")
+            self._log("⚠  pipe 1: bottom limit must be > top limit.")
             return None
         if p1_right <= p1_left:
-            self._log("⚠  pipe 1 : la limite droite doit être > limite gauche.")
+            self._log("⚠  pipe 1: right limit must be > left limit.")
             return None
         if p2_bot <= p2_top:
-            self._log("⚠  pipe 2 : la limite basse doit être > limite haute.")
+            self._log("⚠  pipe 2: bottom limit must be > top limit.")
             return None
         if p2_right <= p2_left:
-            self._log("⚠  pipe 2 : la limite droite doit être > limite gauche.")
+            self._log("⚠  pipe 2: right limit must be > left limit.")
             return None
         if p1_bs < 1 or p1_bs > 8:
-            self._log("⚠  pipe 1 : la taille de bloc doit être entre 1 et 8.")
+            self._log("⚠  pipe 1: block size must be between 1 and 8.")
             return None
         if p2_bs < 1:
-            self._log("⚠  pipe 2 : la taille de bloc doit être ≥ 1.")
+            self._log("⚠  pipe 2: block size must be ≥ 1.")
             return None
 
         # Calcul decimation pipe 2
         dec2, ds2 = compute_pipe2_params(p2_bs)
         if dec2 is None:
             self._log(
-                f"⚠  pipe 2 : taille de bloc {p2_bs} invalide — aucune combinaison "
-                f"décimation/downsize possible (downsize doit être ≤ 8)."
+                f"⚠  pipe 2: block size {p2_bs} invalid — no decimation/downsize "
+                f"combination possible (downsize must be ≤ 8)."
             )
             return None
 

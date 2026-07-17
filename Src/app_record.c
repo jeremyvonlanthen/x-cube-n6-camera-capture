@@ -227,6 +227,8 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
   uint32_t frame_count = 0;
   uint32_t encode_ok_count = 0;
 
+  printf("[REC] video started %d ms after movement detection\r\n", (int)(start_tick-actual_ticks));
+
   while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {
     if (!h264_frame_ready) {
       vTaskDelay(pdMS_TO_TICKS(1));

@@ -87,6 +87,7 @@ volatile int h264_streaming = 0;
 volatile int h264_frame_ready = 0;
 volatile int force_intra = 0;
 uint8_t * volatile h264_ready_buf = NULL;
+uint32_t actual_ticks;
 
 /* ==========================================================================
  * Console & memory helpers
@@ -270,6 +271,7 @@ void app_run(void)
 
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
 				printf("[FSM] movement detected!\r\n");
+				actual_ticks = HAL_GetTick();
 				state = RECORDING;
 				break;
 			}
