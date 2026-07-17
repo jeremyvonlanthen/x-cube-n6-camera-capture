@@ -232,6 +232,10 @@ void ENC_Init(ENC_Conf_t *p_conf)
   ret = H264EncGetCodingCtrl(p_ctx->hdl, &ctrl);
   assert(ret == H264ENC_OK);
   ctrl.idrHeader = 1;
+  /* Full-range luma [0..255] to match the JPEG (JFIF is full-range) so the
+   * video and the snapshot render with the same brightness/contrast.
+   * Default 0 = limited [16..235]. */
+  ctrl.videoFullRange = 1;
   ret = H264EncSetCodingCtrl(p_ctx->hdl, &ctrl);
   assert(ret == H264ENC_OK);
 

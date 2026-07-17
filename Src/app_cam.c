@@ -141,7 +141,7 @@ static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int s
   dcmipp_conf.output_bpp = CAM_FormatToBpp(cam_conf->dcmipp_output_format);
   dcmipp_conf.mode = CMW_Aspect_ratio_manual_roi;
   dcmipp_conf.enable_swap = cam_conf->is_rgb_swap;
-  dcmipp_conf.enable_gamma_conversion = 0;
+  dcmipp_conf.enable_gamma_conversion = 1;  /* sRGB-ish gamma: lifts midtones so JPEG & video look bright/pleasant (0 = linear, darker) */
   CAM_InitCropConfig(&dcmipp_conf.manual_conf, sensor_width, sensor_height, conf);
 
   /*Init Pipe1*/

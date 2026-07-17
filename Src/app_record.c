@@ -29,7 +29,7 @@
  * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
 #define H264_FPS              25
 #define H264_VENC_OUT_SIZE    (1024 * 1024)  /* 1 MB: holds a full 1080p keyframe */
-#define H264_AE_WARMUP_FRAMES 20
+#define H264_AE_WARMUP_FRAMES 10
 #define H264_MAX_HEIGHT       1080     /* do not exceed: pools sized for this */
 
 /* VENC hardware output buffer (module-private) */
@@ -97,6 +97,13 @@ void record_jpeg_sd(const char *timestamp, int height)
   }
   snapshot_in_progress = 0;
 
+  {
+    int32_t je = 0, jg = 0;
+    CMW_CAMERA_GetExposure(&je);
+    CMW_CAMERA_GetGain(&jg);
+    printf("[REC] jpeg AE: exp=%ld gain=%ld\r\n", (long)je, (long)jg);
+  }
+
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
 
   /* Hardware JPEG encode: pipe1 was switched to width x height above */
@@ -145,6 +152,12 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
    * RGB565 (2 B/px) halves PSRAM bandwidth vs ARGB8888: fixes DCMIPP
    * pixel-packer overruns (right-side line artifacts).  Encoder preproc
    * is set to H264ENC_RGB565 accordingly (app_enc.c). */
+  /* Reuse the exposure/gain converged before the reconfig as a seed, so the
+   * AE warmup below starts near-correct instead of from a dark default. */
+  int32_t seed_exp = 0, seed_gain = 0;
+  CMW_CAMERA_GetExposure(&seed_exp);
+  CMW_CAMERA_GetGain(&seed_gain);
+
   CAM_Deinit();
   cam_conf.capture_width        = width;
   cam_conf.capture_height       = height;
@@ -152,6 +165,10 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
   cam_conf.dcmipp_output_format = DCMIPP_PIXEL_PACKER_FORMAT_RGB565_1;
   cam_conf.is_rgb_swap          = 0;
   CAM_Init(&cam_conf, 0);
+
+  /* Seed the freshly-reset AE (CAM_Init resets exposure/gain to defaults). */
+  if (seed_exp  > 0) CMW_CAMERA_SetExposure(seed_exp);
+  if (seed_gain > 0) CMW_CAMERA_SetGain(seed_gain);
 
   if (!hw_initialized) {
     /* VENC hardware — assert-fails if called twice */
@@ -218,6 +235,13 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
         vTaskDelay(pdMS_TO_TICKS(1));
       }
     }
+  }
+  {
+    int32_t conv_exp = 0, conv_gain = 0;
+    CMW_CAMERA_GetExposure(&conv_exp);
+    CMW_CAMERA_GetGain(&conv_gain);
+    printf("[REC] video AE: seed exp=%ld gain=%ld -> converged exp=%ld gain=%ld\r\n",
+           (long)seed_exp, (long)seed_gain, (long)conv_exp, (long)conv_gain);
   }
   printf("[REC] recording started (%d sec @ %d fps)...\r\n", rec_duration, H264_FPS);
 
