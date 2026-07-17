@@ -15,8 +15,8 @@
 /* --- Constantes partagees --- */
 #define SENSOR_WIDTH          2592
 #define SENSOR_HEIGHT         1944
-#define SENSOR_WARMUP_FPS     10
-#define WARMUP_FRAMES_TARGET  60      /* frames skipped so the AE/ISP converge */
+#define SENSOR_WARMUP_FPS     5
+#define WARMUP_FRAMES_TARGET  10      /* frames skipped so the AE/ISP converge */
 
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)
@@ -48,8 +48,8 @@ typedef enum
   SEND_YUV_FRAME,
   RECEIVE_PIPES_CONFIG,
   DETECT_MODE_WARMUP,
-  PIPES_CONFIGURATION,
   MOVEMENT_DETECTION,
+  RECORD_MODE_WARMUP,
   RECORDING
 } state_t;
 

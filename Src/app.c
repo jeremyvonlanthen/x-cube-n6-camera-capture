@@ -184,6 +184,9 @@ void app_run(void)
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
 
+	char timestamp[20];
+	int rec_files_height = 1080; // 480, 720, 960, 1080 (max)
+
 	while(1)
 	{
 		LED_mode();
@@ -195,7 +198,7 @@ void app_run(void)
 				state = CONFIG_MODE_WARMUP;
 				break;
 			}
-			HAL_Delay(2000);
+			vTaskDelay(pdMS_TO_TICKS(2000));
 			break;
 
 		case CONFIG_MODE_WARMUP:
@@ -251,15 +254,11 @@ void app_run(void)
 			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 			printf("[FSM] detection warmup ended\r\n");
 
-			state = PIPES_CONFIGURATION;
-			break;
-
-		case PIPES_CONFIGURATION:
 			printf("[FSM] pipes configuration procedure\r\n");
 			dcmipp_apply_detect_config();
+			printf("[FSM] start movement detection... (TAMP button)\r\n");
 
 			state = MOVEMENT_DETECTION;
-			printf("[FSM] start movement detection... (TAMP button)\r\n");
 			break;
 
 		case MOVEMENT_DETECTION:
@@ -272,18 +271,22 @@ void app_run(void)
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
 				printf("[FSM] movement detected!\r\n");
 				actual_ticks = HAL_GetTick();
-				state = RECORDING;
+				state = RECORD_MODE_WARMUP;
 				break;
 			}
-			HAL_Delay(1000);
+			vTaskDelay(pdMS_TO_TICKS(1000));
+			break;
+
+		case RECORD_MODE_WARMUP:
+			rtc_make_timestamp(timestamp, sizeof(timestamp));
+			record_jpeg_sd(timestamp, rec_files_height);
+			record_camera_setup(rec_files_height);
+
+			state = RECORDING;
 			break;
 
 		case RECORDING:
-			char timestamp[20];
-			rtc_make_timestamp(timestamp, sizeof(timestamp));
-
-			record_jpeg_sd(timestamp, 1080);    //jpg height: 480, 720, 960, 1080...1944 (full res.)
-			record_h264_sd(timestamp, 1080, 8); //mp4 height: 480, 720, 960, 1080 (max) / video length (sec)
+			record_h264_run(timestamp, rec_files_height, 8);
 
 			state = DETECT_MODE_WARMUP;
 			break;

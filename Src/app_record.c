@@ -23,8 +23,8 @@
 #include "task.h"
 
 /* H264 recording configuration (module-private).
- * The video resolution (4:3) is passed to record_h264_sd() as its 'height'
- * argument; the width is derived (height * 4 / 3).  The height must stay
+ * The video resolution (4:3) is passed to record_camera_setup()/record_h264_run()
+ * as their 'height' argument; the width is derived (height * 4 / 3).  It must stay
  * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
  * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
 #define H264_FPS              25
@@ -60,7 +60,7 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
 /* Takes one snapshot (camera is still in the post-warmup configuration),
  * encodes it to JPEG (hardware) and saves it to the SD card as
  * <timestamp>.jpg through the FreeRTOS SD writer task (app_rec.c).
- * Called on the TAMP button, right before record_h264_sd().
+ * Called in RECORD_MODE_WARMUP, right before record_camera_setup().
  *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res). */
 void record_jpeg_sd(const char *timestamp, int height)
 {
@@ -75,9 +75,9 @@ void record_jpeg_sd(const char *timestamp, int height)
    * mode: reconfigure PIPE1 ONLY to a full-scene width x height YUV422
    * downscale (ROI = full sensor).  The sensor is untouched, so the
    * AE/exposure converged during the detect warmup stay valid -> no delay,
-   * color is immediate.  No restore needed: record_h264_sd() reconfigures the
-   * camera right after, and DETECT_MODE_WARMUP + PIPES_CONFIGURATION re-apply
-   * the detect setup once the recording is done. */
+   * color is immediate.  No restore needed: record_camera_setup() reconfigures
+   * the camera right after, and DETECT_MODE_WARMUP re-applies the detect setup
+   * once the recording is done. */
   CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
                       width, height, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 
@@ -127,11 +127,13 @@ void record_jpeg_sd(const char *timestamp, int height)
     printf("[REC] snapshot save FAILED\r\n");
 }
 
-/* Records rec_duration seconds of (height*4/3)x(height)@fps H264 video
- * into a new <timestamp>.mp4 on the SD card, then restores the camera state
- * (clears warmup_done so the current mode re-enters from scratch).
+/* Prepares the camera for H264 recording: reconfigures to (height*4/3) x height
+ * RGB565 (full-scene downscale), (re)inits the VENC + H264 encoder once, starts
+ * the double-buffered capture and lets the AE settle.  Called in
+ * RECORD_MODE_WARMUP, right before record_h264_run(); leaves the double-buffered
+ * capture running for it.
  *   height : 4:3 video height, must be <= H264_MAX_HEIGHT (width is derived). */
-void record_h264_sd(const char *timestamp, int height, int rec_duration)
+void record_camera_setup(int height)
 {
   /* LL_VENC_Init and ENC_Init must each be called exactly once —
    * ENC_DeInit crashes on this target.  Init once on first entry,
@@ -142,9 +144,7 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
   uint32_t frame_bytes = (uint32_t)width * (uint32_t)height * 2u; /* RGB565 */
   CAM_conf_t cam_conf = { 0 };
   ENC_Conf_t enc_conf;
-  char fname[40];
 
-  snprintf(fname, sizeof(fname), "%s.mp4", timestamp);
   assert(height <= H264_MAX_HEIGHT);  /* encoder pools sized for this max */
 
   /* Switch camera to width x height RGB565 @ H264_FPS for H264 (full-scene
@@ -195,20 +195,6 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
   h264_frame_ready  = 0;
   h264_ready_buf    = buffer_full_frame;
 
-  /* Open the MP4 file and start the muxer.
-   * Ring buffer: the recording capture only uses the first 2 RGB565
-   * frames (2 x 1.84 MB) of buffer_full_frame (sized 9.7 MB for the
-   * full-res config mode) — the remaining ~6 MB buffer several seconds
-   * of encoded video, absorbing long SD card pauses without dropping. */
-  if (REC_Start(width, height, H264_FPS,
-                buffer_full_frame + 2 * frame_bytes,
-                MAX_CAPTURE_FRAME_SIZE - 2 * frame_bytes,
-                fname) != 0) {
-    printf("[REC] record start failed, recording aborted\r\n");
-    warmup_done = 0;
-    return;
-  }
-
   /* Start double-buffered continuous capture (two 720p frames inside
    * buffer_full_frame).  Single-buffer capture caused tearing artifacts on
    * the right side of the image: VENC was reading the frame while DCMIPP
@@ -243,6 +229,36 @@ void record_h264_sd(const char *timestamp, int height, int rec_duration)
     printf("[REC] video AE: seed exp=%ld gain=%ld -> converged exp=%ld gain=%ld\r\n",
            (long)seed_exp, (long)seed_gain, (long)conv_exp, (long)conv_gain);
   }
+}
+
+/* Records rec_duration seconds of H264 video into <timestamp>.mp4 using the
+ * double-buffered capture already started by record_camera_setup().  Opens the
+ * MP4, runs the capture->encode loop, finalizes the file, and stops the capture.
+ * Called in RECORDING, right after RECORD_MODE_WARMUP.
+ *   height : must match the value passed to record_camera_setup(). */
+void record_h264_run(const char *timestamp, int height, int rec_duration)
+{
+  int width = height * 4 / 3;                                 /* 4:3 */
+  uint32_t frame_bytes = (uint32_t)width * (uint32_t)height * 2u; /* RGB565 */
+  char fname[40];
+
+  snprintf(fname, sizeof(fname), "%s.mp4", timestamp);
+
+  /* Open the MP4 file and start the muxer.  Ring buffer lives in the unused
+   * part of buffer_full_frame (after the 2 capture frames) -> several seconds
+   * of encoded video, absorbing SD latency spikes. */
+  if (REC_Start(width, height, H264_FPS,
+                buffer_full_frame + 2 * frame_bytes,
+                MAX_CAPTURE_FRAME_SIZE - 2 * frame_bytes,
+                fname) != 0) {
+    printf("[REC] record start failed, recording aborted\r\n");
+    /* Stop the capture started by record_camera_setup(). */
+    h264_streaming = 0;
+    CLEAR_BIT(hcamera_dcmipp.Instance->P1PPCR, DCMIPP_P1PPCR_DBM);
+    warmup_done = 0;
+    return;
+  }
+
   printf("[REC] recording started (%d sec @ %d fps)...\r\n", rec_duration, H264_FPS);
 
   /* Record for rec_duration seconds */
