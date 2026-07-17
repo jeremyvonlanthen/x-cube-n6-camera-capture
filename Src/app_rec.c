@@ -53,10 +53,10 @@ static void  mp4_pool_free(void *ptr);
 
 /* ------------------------------------------------------------------------ */
 /* Configuration                                                             */
-/* PSRAM is nearly full (camera frame buffer 9.6 MB + VENC allocator 4 MB +  */
-/* JPEG 1 MB + VENC out 255 KB), only ~1.15 MB left, so keep these tight.   */
+/* PSRAM extended to 32 MB (linker), so there is plenty of headroom now.     */
+/* REC_MAX_FRAME must match H264_VENC_OUT_SIZE (largest encoded frame).      */
 /* ------------------------------------------------------------------------ */
-#define REC_MAX_FRAME       (255 * 1024)  /* = H264_VENC_OUT_SIZE            */
+#define REC_MAX_FRAME       (1024 * 1024) /* = H264_VENC_OUT_SIZE (1080p keyframe) */
 #define REC_MSG_NB          256           /* max frames in flight            */
 #define REC_TASK_STACK_SIZE 4096          /* words -> 16 KB                  */
 #define REC_TASK_PRIORITY   (tskIDLE_PRIORITY + 1)

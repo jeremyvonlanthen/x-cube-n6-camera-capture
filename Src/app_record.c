@@ -27,8 +27,8 @@
  * argument; the width is derived (height * 4 / 3).  The height must stay
  * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
  * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
-#define H264_FPS              30
-#define H264_VENC_OUT_SIZE    (255 * 1024)
+#define H264_FPS              25
+#define H264_VENC_OUT_SIZE    (1024 * 1024)  /* 1 MB: holds a full 1080p keyframe */
 #define H264_AE_WARMUP_FRAMES 20
 #define H264_MAX_HEIGHT       1080     /* do not exceed: pools sized for this */
 
