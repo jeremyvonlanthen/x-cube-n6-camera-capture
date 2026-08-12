@@ -63,7 +63,7 @@
 Config_t config_py = { 0 };
 
 /* DIAS state machine */
-state_t state = SD_CARD;
+state_t state = CONFIG_MODE_WARMUP;
 
 /* Capture buffers (PSRAM) */
 uint8_t buffer_full_frame[MAX_CAPTURE_FRAME_SIZE] ALIGN_32 IN_PSRAM;
@@ -76,6 +76,7 @@ uint8_t *buffer_warmup = NULL;
 JPG_conf_t jpg_conf = { 0 };
 
 /* Capture/mode flags */
+volatile int sd_initialized = 0;
 volatile int snapshot_in_progress = 0;
 volatile int frame_ready = 0;
 volatile int warmup_frames = 0;
@@ -193,14 +194,6 @@ void app_run(void)
 
 		switch(state)
 		{
-		case SD_CARD:
-			if(SD_init()){
-				state = CONFIG_MODE_WARMUP;
-				break;
-			}
-			vTaskDelay(pdMS_TO_TICKS(2000));
-			break;
-
 		case CONFIG_MODE_WARMUP:
 			printf("[FSM] config mode warmup... (%d frames @ %d fps)\r\n",
 					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
@@ -256,36 +249,58 @@ void app_run(void)
 
 			printf("[FSM] pipes configuration procedure\r\n");
 			dcmipp_apply_detect_config();
-			printf("[FSM] start movement detection... (TAMP button)\r\n");
 
+			state = SD_CARD;
+			break;
+
+		case SD_CARD:
+			if(!sd_initialized && SD_init()){
+				sd_initialized = 1;
+				state = OP_WINDOW_CHECK;
+				break;
+			}
+
+			if(sd_initialized){
+				if(BSP_SD_GetCardState(0) != SD_TRANSFER_OK){
+					printf("[uSD] uSD has been disconnected, config procedure restart...\r\n");
+					sd_initialized = 0;
+				}
+				else{
+					state = OP_WINDOW_CHECK;
+					break;
+				}
+			}
+
+			vTaskDelay(pdMS_TO_TICKS(2000));
+			break;
+
+		case OP_WINDOW_CHECK:
+			//TODO: check operation window (24h/diurne)
+
+			printf("[FSM] start movement detection... (TAMP button)\r\n");
 			state = MOVEMENT_DETECTION;
 			break;
 
 		case MOVEMENT_DETECTION:
-			if(BSP_SD_GetCardState(0) != SD_TRANSFER_OK){
-				printf("[uSD] uSD has been disconnected, config procedure restart...\r\n");
-				state = SD_CARD;
-				break;
-			}
-
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
 				printf("[FSM] movement detected!\r\n");
 				actual_ticks = HAL_GetTick();
-				state = RECORD_MODE_WARMUP;
+				state = RECORD_MODE_INIT;
 				break;
 			}
 			vTaskDelay(pdMS_TO_TICKS(1000));
+			state = SD_CARD;
 			break;
 
-		case RECORD_MODE_WARMUP:
+		case RECORD_MODE_INIT:
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
 			record_jpeg_sd(timestamp, rec_files_height);
 			record_camera_setup(rec_files_height);
 
-			state = RECORDING;
+			state = VIDEO_RECORDING;
 			break;
 
-		case RECORDING:
+		case VIDEO_RECORDING:
 			record_h264_run(timestamp, rec_files_height, 8);
 
 			state = DETECT_MODE_WARMUP;

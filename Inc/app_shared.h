@@ -43,14 +43,15 @@ typedef struct __attribute__((packed))
 
 typedef enum
 {
-  SD_CARD,
   CONFIG_MODE_WARMUP,
   SEND_YUV_FRAME,
   RECEIVE_PIPES_CONFIG,
   DETECT_MODE_WARMUP,
+  SD_CARD,
+  OP_WINDOW_CHECK,
   MOVEMENT_DETECTION,
-  RECORD_MODE_WARMUP,
-  RECORDING
+  RECORD_MODE_INIT,
+  VIDEO_RECORDING
 } state_t;
 
 /* --- Handles communs (definis ailleurs) --- */
