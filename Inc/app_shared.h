@@ -18,6 +18,8 @@
 #define SENSOR_WARMUP_FPS     5
 #define WARMUP_FRAMES_TARGET  10      /* frames skipped so the AE/ISP converge */
 
+#define SLEEP_STRATEGY 3
+
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)
 
@@ -56,6 +58,7 @@ typedef enum
 
 /* --- Handles communs (definis ailleurs) --- */
 extern UART_HandleTypeDef huart1;              /* main.c */
+extern LPTIM_HandleTypeDef hlptim1;
 extern DCMIPP_HandleTypeDef hcamera_dcmipp;    /* app_cam.c */
 extern volatile uint32_t dcmipp_err_count;     /* app_cam.c */
 

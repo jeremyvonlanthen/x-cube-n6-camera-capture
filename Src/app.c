@@ -63,7 +63,7 @@
 Config_t config_py = { 0 };
 
 /* DIAS state machine */
-state_t state = CONFIG_MODE_WARMUP;
+state_t state = MOVEMENT_DETECTION; //CONFIG_MODE_WARMUP;
 
 /* Capture buffers (PSRAM) */
 uint8_t buffer_full_frame[MAX_CAPTURE_FRAME_SIZE] ALIGN_32 IN_PSRAM;
@@ -282,14 +282,58 @@ void app_run(void)
 			break;
 
 		case MOVEMENT_DETECTION:
-			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
-				printf("[FSM] movement detected!\r\n");
-				actual_ticks = HAL_GetTick();
+			// Variables pour mesurer le temps d'exécution de l'algorithme
+			uint32_t start_time = HAL_GetTick();
+
+			// -------------------------------------------------------------
+			// EXÉCUTION DE VOTRE ALGORITHME STATISTIQUE (Pipes 1 & 2)
+			// -------------------------------------------------------------
+			uint8_t movement_detected = 0; //run_statistical_algo_pipe1_pipe2();
+
+			if (movement_detected) {
 				state = RECORD_MODE_INIT;
 				break;
 			}
-			vTaskDelay(pdMS_TO_TICKS(1000));
-			state = SD_CARD;
+
+			// Calcul du temps écoulé pendant l'algorithme (en millisecondes)
+			uint32_t elapsed_time = HAL_GetTick() - start_time;
+
+			// Sécurité : si l'algo prend plus d'une seconde, on évite un overflow
+			uint32_t sleep_duration_ms = (elapsed_time < 1000) ? (1000 - elapsed_time) : 0;
+
+			// -------------------------------------------------------------
+			// APPLICATION DE LA STRATÉGIE D'ATTENTE SÉLECTIONNÉE
+			// -------------------------------------------------------------
+			#if (SLEEP_STRATEGY == 1)
+					// 1. HAL delay simple (Référentiel : CPU à 100%, consommation max)
+					HAL_Delay(sleep_duration_ms);
+
+			#elif (SLEEP_STRATEGY == 2)
+					// 2. vTaskDelay (Attente passive : le CPU reste actif mais l'OS tourne)
+					vTaskDelay(pdMS_TO_TICKS(sleep_duration_ms));
+
+			#elif (SLEEP_STRATEGY == 3)
+					// 3. Sommeil profond avec réveil matériel ajusté
+					if (sleep_duration_ms > 0) {
+							// Configuration dynamique du Timer Basse Consommation (LPTIM)
+							// On ajuste sa période exactement sur le temps de sommeil restant
+							HAL_LPTIM_TimeOut_Start_IT(&hlptim1, sleep_duration_ms);
+
+							// Suspension du Tick de l'OS pour éviter qu'il ne réveille le CPU toutes les 40ms
+							HAL_SuspendTick();
+
+							// Entrée en mode STOP (Coupe l'horloge CPU et les périphériques rapides)
+							// Le STM32N6 attend l'interruption du LPTIM pour sortir de cette ligne
+							HAL_PWR_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFI);
+
+							// --- LE CPU REPREND ICI APRÈS L'INTERRUPTION DU LPTIM (1Hz) ---
+
+							// Relance du Tick de l'OS immédiatement après le réveil
+							HAL_ResumeTick();
+							HAL_LPTIM_TimeOut_Stop(&hlptim1);
+					}
+			#endif
+
 			break;
 
 		case RECORD_MODE_INIT:
