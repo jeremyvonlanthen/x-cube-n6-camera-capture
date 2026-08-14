@@ -63,7 +63,7 @@
 Config_t config_py = { 0 };
 
 /* DIAS state machine */
-state_t state = MOVEMENT_DETECTION; //CONFIG_MODE_WARMUP;
+state_t state = CONFIG_MODE_WARMUP;
 
 /* Capture buffers (PSRAM) */
 uint8_t buffer_full_frame[MAX_CAPTURE_FRAME_SIZE] ALIGN_32 IN_PSRAM;
@@ -190,7 +190,7 @@ void app_run(void)
 
 	while(1)
 	{
-		LED_mode();
+		//LED_mode();
 
 		switch(state)
 		{
@@ -289,6 +289,7 @@ void app_run(void)
 			// EXÉCUTION DE VOTRE ALGORITHME STATISTIQUE (Pipes 1 & 2)
 			// -------------------------------------------------------------
 			uint8_t movement_detected = 0; //run_statistical_algo_pipe1_pipe2();
+			HAL_Delay(100); //100ms de traitement statistique
 
 			if (movement_detected) {
 				state = RECORD_MODE_INIT;
@@ -315,25 +316,22 @@ void app_run(void)
 			#elif (SLEEP_STRATEGY == 3)
 					// 3. Sommeil profond avec réveil matériel ajusté
 					if (sleep_duration_ms > 0) {
-							// Configuration dynamique du Timer Basse Consommation (LPTIM)
-							// On ajuste sa période exactement sur le temps de sommeil restant
-							HAL_LPTIM_TimeOut_Start_IT(&hlptim1, sleep_duration_ms);
+						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
+						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
 
-							// Suspension du Tick de l'OS pour éviter qu'il ne réveille le CPU toutes les 40ms
-							HAL_SuspendTick();
+						hlptim1.Init.Period = period_ticks;
+						HAL_LPTIM_Init(&hlptim1);
 
-							// Entrée en mode STOP (Coupe l'horloge CPU et les périphériques rapides)
-							// Le STM32N6 attend l'interruption du LPTIM pour sortir de cette ligne
-							HAL_PWR_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFI);
+						HAL_LPTIM_Counter_Start_IT(&hlptim1);
+						HAL_SuspendTick();
+						HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
 
-							// --- LE CPU REPREND ICI APRÈS L'INTERRUPTION DU LPTIM (1Hz) ---
-
-							// Relance du Tick de l'OS immédiatement après le réveil
-							HAL_ResumeTick();
-							HAL_LPTIM_TimeOut_Stop(&hlptim1);
+						SystemClock_Config();
+						HAL_ResumeTick();
 					}
 			#endif
 
+			//state = SD_CARD;
 			break;
 
 		case RECORD_MODE_INIT:

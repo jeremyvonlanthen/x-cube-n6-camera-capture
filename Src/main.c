@@ -46,8 +46,8 @@ UART_HandleTypeDef huart1;
 
 /* RTC (LSI). Configured by RTC_Config below; the rtc_* runtime helpers
  * live in app.c and use these two symbols. */
-RTC_HandleTypeDef hrtc;
 LPTIM_HandleTypeDef hlptim1;
+RTC_HandleTypeDef hrtc;
 volatile int rtc_ready = 0;   /* 1 once HAL_RTC_Init succeeded */
 
 /* H264 encoder call chain requires significantly more stack than the default.
@@ -57,12 +57,11 @@ volatile int rtc_ready = 0;   /* 1 once HAL_RTC_Init succeeded */
 static StaticTask_t main_thread;
 static StackType_t main_thread_stack[MAIN_THREAD_STACK_SIZE];
 
-static void SystemClock_Config(void);
+void SystemClock_Config(void);
 static void Security_Config();
 static void IAC_Config();
 static void CONSOLE_Config(void);
 static void RTC_Config(void);
-static void MX_LPTIM1_Init(void);
 static void Setup_Mpu(void);
 static int main_freertos(void);
 static void main_thread_fct(void *arg);
@@ -165,7 +164,7 @@ void IAC_IRQHandler(void)
   }
 }
 
-static void SystemClock_Config(void)
+void SystemClock_Config(void)
 {
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -355,6 +354,41 @@ static void RTC_Config(void)
   rtc_ready = 1;
 }
 
+static void MX_LPTIM1_Init(void)
+{
+  RCC_PeriphCLKInitTypeDef pclk = {0};
+
+  pclk.PeriphClockSelection = RCC_PERIPHCLK_LPTIM1;
+  pclk.Lptim1ClockSelection = RCC_LPTIM1CLKSOURCE_LSI;
+  if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK) {
+    printf("[LPTIM1] clock select failed\r\n");
+    return;
+  }
+
+  __HAL_RCC_LPTIM1_CLK_ENABLE();
+
+  hlptim1.Instance = LPTIM1;
+  hlptim1.Init.Clock.Source          = LPTIM_CLOCKSOURCE_APBCLOCK_LPOSC;
+  hlptim1.Init.Clock.Prescaler       = LPTIM_PRESCALER_DIV1;
+  hlptim1.Init.Trigger.Source        = LPTIM_TRIGSOURCE_SOFTWARE;
+  hlptim1.Init.UpdateMode            = LPTIM_UPDATE_IMMEDIATE;
+  hlptim1.Init.CounterSource         = LPTIM_COUNTERSOURCE_INTERNAL;
+  hlptim1.Init.Period                = 0xFFFF;
+  hlptim1.Init.RepetitionCounter     = 0;
+  if (HAL_LPTIM_Init(&hlptim1) != HAL_OK) {
+    printf("[LPTIM1] init failed\r\n");
+    return;
+  }
+
+  HAL_NVIC_SetPriority(LPTIM1_IRQn, 5, 0);
+  HAL_NVIC_EnableIRQ(LPTIM1_IRQn);
+}
+
+void HAL_LPTIM_AutoReloadMatchCallback(LPTIM_HandleTypeDef *hlptim)
+{
+  HAL_LPTIM_Counter_Stop_IT(hlptim);
+}
+
 static int main_freertos()
 {
   TaskHandle_t hdl;
@@ -509,46 +543,3 @@ __attribute__ ((section (".keep_me"))) void app_clean_invalidate_dbg()
 {
   SCB_CleanInvalidateDCache();
 }
-
-static void MX_LPTIM1_Init(void)
-{
-  RCC_PeriphCLKInitTypeDef PeriphClkInit = {0};
-
-  // 1. Branchement du LPTIM1 sur l'horloge LSI
-  PeriphClkInit.PeriphClockSelection = RCC_PERIPHCLK_LPTIM1;
-  PeriphClkInit.Lptim1ClockSelection = RCC_LPTIM1CLKSOURCE_LSI;
-  if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInit) != HAL_OK) {
-    while(1);
-  }
-
-  // 2. Activation de l'horloge de contrôle du périphérique
-  __HAL_RCC_LPTIM1_CLK_ENABLE();
-
-  // 3. Configuration du NVIC pour autoriser le réveil par l'interruption LPTIM1
-  HAL_NVIC_SetPriority(LPTIM1_IRQn, 5, 0);
-  HAL_NVIC_EnableIRQ(LPTIM1_IRQn);
-
-  // 4. Initialisation du temporisateur adaptée au pilote STM32N6xx
-  hlptim1.Instance = LPTIM1;
-  hlptim1.Init.Clock.Prescaler = LPTIM_PRESCALER_DIV32; // 32 kHz / 32 = 1 kHz (1 tick = 1 ms)
-  hlptim1.Init.Trigger.Source  = LPTIM_TRIGSOURCE_SOFTWARE;
-  hlptim1.Init.UpdateMode      = LPTIM_UPDATE_IMMEDIATE;
-  hlptim1.Init.CounterSource   = LPTIM_COUNTERSOURCE_INTERNAL;
-
-  if (HAL_LPTIM_Init(&hlptim1) != HAL_OK) {
-    while(1);
-  }
-}
-
-// Handler de l'interruption appelé par le matériel lors du réveil
-void LPTIM1_IRQHandler(void)
-{
-  HAL_LPTIM_IRQHandler(&hlptim1);
-}
-
-// Callback requis par la HAL après effacement des drapeaux d'interruption
-void HAL_LPTIM_CompareMatchCallback(LPTIM_HandleTypeDef *hlptim)
-{
-  // Le simple fait d'entrer ici réveille le cœur Cortex-M55
-}
-

@@ -128,3 +128,12 @@ void EXTI13_IRQHandler(void)  // à adapter selon BUTTON_USER1_EXTI_IRQn
 {
     BSP_PB_IRQHandler(BUTTON_USER1);
 }
+
+extern LPTIM_HandleTypeDef hlptim1;
+/**
+  * @brief This function handles LPTIM1 global interrupt.
+  */
+void LPTIM1_IRQHandler(void)
+{
+  HAL_LPTIM_IRQHandler(&hlptim1);
+}
