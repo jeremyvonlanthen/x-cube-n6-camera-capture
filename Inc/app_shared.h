@@ -18,7 +18,38 @@
 #define SENSOR_WARMUP_FPS     5
 #define WARMUP_FRAMES_TARGET  10      /* frames skipped so the AE/ISP converge */
 
-#define SLEEP_STRATEGY 1
+/* MOVEMENT_DETECTION idle-wait strategy under test (see app.c):
+ *   1 = reference busy-wait (HAL_Delay, Run mode, no low power at all)
+ *   2 = SLEEP mode   (CSLEEP: only the Cortex-M55 core clock is gated)
+ *   3 = STOP mode    (CSTOP: CPU + bus clocks + PLL1..4 gated, SRAM/state kept)
+ *       ON HOLD: HAL_PWR_EnterSTOPMode() never wakes on this board with LPTIM1
+ *       (confirmed with SVOS3/5, WFI/WFE, clean power cycle -- see
+ *       ST_ticket_stop_mode.txt). Kept in the code for reference/ticket
+ *       reproduction only; don't use for real measurements right now.
+ *   4 = SLEEP mode + PLL1..4 manually switched off beforehand (CPUCLK/SYSCLK
+ *       moved to HSI first), restored via SystemClock_Config() on wake.
+ *       Practical replacement for 3: same reliable SLEEP wake path, but
+ *       attacks the PLLs directly instead of relying on STOP.
+ * STANDBY is deliberately not offered here: it wipes SRAM and restarts from
+ * the reset vector, which is incompatible with resuming this FSM every
+ * ~1s (see comments in app.c). */
+#define SLEEP_STRATEGY 4
+
+/* Strategy 3 only: narrow the "peripheral clock kept alive in low-power
+ * mode" bits (set wide-open at boot in main.c) down to just LPTIM1 for the
+ * duration of the STOP sleep window. DEFAULT OFF: the AHB4 group we blanket
+ * -disable also carries PWR's own low-power clock-keep bit (per the HAL
+ * header), and PWR is what drives the wake-up sequencing -- gating it may be
+ * what causes the SWD/debugger lockups seen when this was enabled. Only
+ * flip to 1 to deliberately re-test this hypothesis, ideally without a
+ * debugger attached. */
+#define STOP_MODE_NARROW_CLOCKS 0
+
+/* Keep DBGMCU clocked through SLEEP/STOP/STANDBY so ST-LINK/SWD stays
+ * connected and breakpoints work while developing. This ADDS consumption
+ * and defeats what strategies 2/3 are trying to save: set to 0 (and detach
+ * the debugger) before taking any real current measurement. */
+#define DEBUG_KEEP_SWD_ALIVE_IN_LOWPOWER 1
 
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)

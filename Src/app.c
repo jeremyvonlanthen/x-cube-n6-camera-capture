@@ -185,6 +185,17 @@ void app_run(void)
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
 
+	#if (DEBUG_KEEP_SWD_ALIVE_IN_LOWPOWER == 1)
+	/* Without this, DBGMCU (and so SWD/ST-LINK) loses power/clock as soon as
+	 * the core enters SLEEP/STOP, forcing a reconnect on every wake and
+	 * eventually a failed halt -- exactly the "Could not halt device" seen
+	 * when single-stepping/breakpointing strategies 2 and 3. Remove/disable
+	 * before measuring real current: this keeps extra clocks running. */
+	HAL_DBGMCU_EnableDBGSleepMode();
+	HAL_DBGMCU_EnableDBGStopMode();
+	HAL_DBGMCU_EnableDBGStandbyMode();
+	#endif
+
 	char timestamp[20];
 	int rec_files_height = 1080; // 480, 720, 960, 1080 (max)
 
@@ -199,8 +210,11 @@ void app_run(void)
 					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 			printf("[FSM] config warmup ended\r\n");
-
+#if 0
 			state = SEND_YUV_FRAME;
+#endif
+			state = DETECT_MODE_WARMUP;
+
 			printf("[FSM] wait for send yuv frame... (capturer une image)\r\n");
 			break;
 
@@ -248,7 +262,9 @@ void app_run(void)
 			printf("[FSM] detection warmup ended\r\n");
 
 			printf("[FSM] pipes configuration procedure\r\n");
+#if 0
 			dcmipp_apply_detect_config();
+#endif
 
 			state = SD_CARD;
 			break;
@@ -304,32 +320,199 @@ void app_run(void)
 
 			// -------------------------------------------------------------
 			// APPLICATION DE LA STRATÉGIE D'ATTENTE SÉLECTIONNÉE
+			//
+			// Le STM32N6 n'expose que 3 modes basse consommation au niveau HAL
+			// (pas de Stop 0/1/2 ni de "low-power run" comme sur L4/U5) :
+			//   - SLEEP   : coeur Cortex-M55 arrêté, TOUT le reste (bus AXI/AHB/
+			//               APB, PLL1..4, périphériques) reste actif -> réveil
+			//               instantané, gain attendu FAIBLE sur cette carte car
+			//               le coeur ne pèse qu'une fraction de la conso totale
+			//               (4 PLL qui tournent, XSPI PSRAM/NOR en memory-mapped).
+			//   - STOP    : coeur + horloges bus + les 4 PLL coupés (d'où le
+			//               SystemClock_Config() au réveil), RAM/état conservés
+			//               -> gain attendu le plus intéressant, réveil de
+			//               l'ordre de la centaine de µs (relock PLL).
+			//   - STANDBY : RAM perdue, redémarrage depuis le vecteur de reset
+			//               -> incompatible avec la reprise de cette FSM toutes
+			//               les ~1s (il faudrait tout réinitialiser: caméra, SD,
+			//               config...), donc pas proposé ici.
 			// -------------------------------------------------------------
 			#if (SLEEP_STRATEGY == 1)
-					// 1. HAL delay simple (Référentiel : CPU à 100%, consommation max)
+					// 1. Référentiel : HAL_Delay = attente active, CPU/bus/PLL au
+					// maximum pendant toute la durée -> borne haute de consommation.
 					HAL_Delay(sleep_duration_ms);
 
 			#elif (SLEEP_STRATEGY == 2)
-					// 2. vTaskDelay (Attente passive : le CPU reste actif mais l'OS tourne)
-					vTaskDelay(pdMS_TO_TICKS(sleep_duration_ms));
-
-			#elif (SLEEP_STRATEGY == 3)
-					// 3. Sommeil profond avec réveil matériel ajusté
+					// 2. Mode SLEEP (CSLEEP) : un seul WFI dimensionné exactement sur
+					// sleep_duration_ms via le LPTIM1. Volontairement explicite (plutôt
+					// que de compter sur le tickless-idle de FreeRTOS) pour avoir une
+					// mesure reproductible, indépendante des autres tâches RTOS.
 					if (sleep_duration_ms > 0) {
 						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
 						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
 
 						hlptim1.Init.Period = period_ticks;
 						HAL_LPTIM_Init(&hlptim1);
-
 						HAL_LPTIM_Counter_Start_IT(&hlptim1);
-						HAL_SuspendTick();
-						HAL_PWR_EnterSTOPMode(PWR_LOWPOWERREGULATOR_ON, PWR_STOPENTRY_WFI);
 
-						SystemClock_Config();
+						HAL_SuspendTick();
+						HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+						/* SLEEP ne coupe ni les bus ni les PLL: pas de resync horloge. */
 						HAL_ResumeTick();
 					}
+
+			#elif (SLEEP_STRATEGY == 3)
+					// 3. Mode STOP (CSTOP) : coeur + bus + PLL1..4 coupés.
+					if (sleep_duration_ms > 0) {
+						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
+						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
+
+						hlptim1.Init.Period = period_ticks;
+						HAL_LPTIM_Init(&hlptim1);
+						HAL_LPTIM_Counter_Start_IT(&hlptim1);
+
+						#if (STOP_MODE_NARROW_CLOCKS == 1)
+						/* main.c active au boot le maintien de TOUS les périphériques
+						 * en horloge basse-conso ("garder les IP actifs pour pouvoir
+						 * réveiller le CPU"). Pour ce réveil piloté uniquement par le
+						 * LPTIM1, restreindre ce maintien au strict minimum le temps
+						 * du sommeil, puis restaurer la politique de boot au réveil. */
+						LL_BUS_DisableClockLowPower(~0);
+						LL_MEM_DisableClockLowPower(~0);
+						LL_AHB1_GRP1_DisableClockLowPower(~0);
+						LL_AHB2_GRP1_DisableClockLowPower(~0);
+						LL_AHB3_GRP1_DisableClockLowPower(~0);
+						LL_AHB4_GRP1_DisableClockLowPower(~0);
+						LL_AHB5_GRP1_DisableClockLowPower(~0);
+						LL_APB1_GRP1_DisableClockLowPower(~0);
+						LL_APB1_GRP1_EnableClockLowPower(LL_APB1_GRP1_PERIPH_LPTIM1);
+						LL_APB1_GRP2_DisableClockLowPower(~0);
+						LL_APB2_GRP1_DisableClockLowPower(~0);
+						LL_APB4_GRP1_DisableClockLowPower(~0);
+						LL_APB4_GRP2_DisableClockLowPower(~0);
+						LL_APB5_GRP1_DisableClockLowPower(~0);
+						LL_MISC_DisableClockLowPower(~0);
+						#endif
+
+						/* Left unconfigured, the Stop-mode regulator voltage range
+						 * (SVOS) has no guaranteed value. Other users report the exact
+						 * same "never wakes from Stop, Sleep works fine" symptom on
+						 * this same board with LPTIM1, and ST support's first ask is
+						 * always to check this setting (AN5946) -- try SCALE5 (lowest
+						 * power) first; if it still never wakes, try SCALE3 instead. */
+						HAL_PWREx_ControlStopModeVoltageScaling(PWR_REGULATOR_STOP_VOLTAGE_SCALE5);
+
+						HAL_SuspendTick();
+						/* Regulator param is ignored on STM32N6 (single regulator,
+						 * kept only for source compat with other STM32 families).
+						 * WFE instead of WFI: some STM32 parts only wake from Stop
+						 * with WFE, not WFI (known issue class on other families --
+						 * worth ruling out here since WFI alone never returns). */
+						HAL_PWR_EnterSTOPMode(PWR_MAINREGULATOR_ON, PWR_STOPENTRY_WFE);
+
+						/* DIAGNOSTIC: proves WFE actually returned (LPTIM wake worked).
+						 * Stays solid ON forever if SystemClock_Config() hangs below
+						 * (it has a bare while(1) on PLL relock failure) -- remove once
+						 * strategy 3 is confirmed stable. */
+						BSP_LED_On(LED_RED);
+
+						#if (STOP_MODE_NARROW_CLOCKS == 1)
+						LL_BUS_EnableClockLowPower(~0);
+						LL_MEM_EnableClockLowPower(~0);
+						LL_AHB1_GRP1_EnableClockLowPower(~0);
+						LL_AHB2_GRP1_EnableClockLowPower(~0);
+						LL_AHB3_GRP1_EnableClockLowPower(~0);
+						LL_AHB4_GRP1_EnableClockLowPower(~0);
+						LL_AHB5_GRP1_EnableClockLowPower(~0);
+						LL_APB1_GRP1_EnableClockLowPower(~0);
+						LL_APB1_GRP2_EnableClockLowPower(~0);
+						LL_APB2_GRP1_EnableClockLowPower(~0);
+						LL_APB4_GRP1_EnableClockLowPower(~0);
+						LL_APB4_GRP2_EnableClockLowPower(~0);
+						LL_APB5_GRP1_EnableClockLowPower(~0);
+						LL_MISC_EnableClockLowPower(~0);
+						#endif
+
+						/* Relancer le tick AVANT SystemClock_Config(): cette dernière
+						 * appelle HAL_Delay(1) (rampe SMPS), et HAL_Delay() est
+						 * remappé sur vTaskDelay() dans freertos_bsp.c -- il a donc
+						 * besoin du tick FreeRTOS pour se débloquer. Le faire dans
+						 * l'autre sens bloque la tâche indéfiniment (tick suspendu
+						 * = plus aucun réveil possible pour ce vTaskDelay). */
+						HAL_ResumeTick();
+
+						/* PLL1..4 coupés par le mode STOP -> reconfig obligatoire. */
+						SystemClock_Config();
+
+						BSP_LED_Off(LED_RED); /* reached only if OscConfig/ClockConfig didn't trap */
+					}
+
+			#elif (SLEEP_STRATEGY == 4)
+					// 4. SLEEP mode (confirmed reliable) + manual PLL shutdown: STOP
+					// mode's LPTIM wake-up doesn't come back on this board (see
+					// ST ticket), so instead of chasing that further, attack the
+					// actual suspected dominant power draw directly while staying
+					// on the wake path we know works. Before sleeping: move
+					// CPUCLK/SYSCLK off the PLL tree onto HSI directly, then switch
+					// PLL1..4 OFF (must be done in that order -- a PLL can't be
+					// disabled while still selected as a clock source). On wake:
+					// SystemClock_Config() (already used by strategy 3, known
+					// working) puts the PLLs back and restores full speed.
+					if (sleep_duration_ms > 0) {
+						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
+						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
+
+						hlptim1.Init.Period = period_ticks;
+						HAL_LPTIM_Init(&hlptim1);
+						HAL_LPTIM_Counter_Start_IT(&hlptim1);
+
+						/* Still in Run mode / tick running here: safe to use HAL_Delay
+						 * indirectly (HAL_RCC_OscConfig polls PLL flags, not the tick). */
+						RCC_ClkInitTypeDef clk_lp = {0};
+						RCC_OscInitTypeDef osc_lp = {0};
+
+						/* MSI@4MHz instead of HSI (~64MHz): lowest-frequency oscillator
+						 * this family offers for CPUCLK/SYSCLK. Must be turned on and
+						 * stable BEFORE it's selected as a clock source below. */
+						osc_lp.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+						osc_lp.MSIState       = RCC_MSI_ON;
+						osc_lp.MSIFrequency   = RCC_MSI_FREQ_4MHZ;
+						HAL_RCC_OscConfig(&osc_lp);
+
+						clk_lp.ClockType    = RCC_CLOCKTYPE_CPUCLK | RCC_CLOCKTYPE_SYSCLK;
+						clk_lp.CPUCLKSource = RCC_CPUCLKSOURCE_MSI;
+						clk_lp.SYSCLKSource = RCC_SYSCLKSOURCE_MSI;
+						HAL_RCC_ClockConfig(&clk_lp);
+
+						/* Now safe to switch PLL1..4 off (no longer selected as source). */
+						osc_lp.OscillatorType = RCC_OSCILLATORTYPE_NONE;
+						osc_lp.PLL1.PLLState = RCC_PLL_OFF;
+						osc_lp.PLL2.PLLState = RCC_PLL_OFF;
+						osc_lp.PLL3.PLLState = RCC_PLL_OFF;
+						osc_lp.PLL4.PLLState = RCC_PLL_OFF;
+						HAL_RCC_OscConfig(&osc_lp);
+
+						HAL_SuspendTick();
+						HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
+
+						/* Same ordering rule as strategy 3: resume tick before any
+						 * call that (indirectly) uses HAL_Delay()/vTaskDelay(). */
+						HAL_ResumeTick();
+						SystemClock_Config(); /* PLLs back ON, full speed restored */
+
+						/* MSI is no longer selected as CPUCLK/SYSCLK source at this
+						 * point (SystemClock_Config moved it to the PLL/IC tree) --
+						 * turn it back off so it isn't left running uselessly until
+						 * the next sleep window. */
+						RCC_OscInitTypeDef osc_msi_off = {0};
+						osc_msi_off.OscillatorType = RCC_OSCILLATORTYPE_MSI;
+						osc_msi_off.MSIState       = RCC_MSI_OFF;
+						HAL_RCC_OscConfig(&osc_msi_off);
+					}
 			#endif
+			BSP_LED_On(LED_GREEN);
+			HAL_Delay(10);
+			BSP_LED_Off(LED_GREEN);
 
 			//state = SD_CARD;
 			break;
