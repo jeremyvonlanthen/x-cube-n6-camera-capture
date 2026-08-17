@@ -492,12 +492,56 @@ void app_run(void)
 						osc_lp.PLL4.PLLState = RCC_PLL_OFF;
 						HAL_RCC_OscConfig(&osc_lp);
 
+						/* Isolated re-test of clock-gating alone (VOS1/VOS0 abandoned
+						 * separately -- confirmed twice to break things on its own,
+						 * this wasn't tested cleanly before since it was previously
+						 * bundled with VOS). Narrow the "peripheral clock kept alive
+						 * in low-power mode" bits down to LPTIM1 + PWR (AHB4 also
+						 * carries PWR's own bit -- gating it broke this same test
+						 * last time). SLEEP wakes via plain NVIC, not the PWR/EXTI
+						 * deep-sleep circuit, so this should be safer here than it
+						 * was for strategy 3's STOP mode. */
+						LL_BUS_DisableClockLowPower(~0);
+						LL_MEM_DisableClockLowPower(~0);
+						LL_AHB1_GRP1_DisableClockLowPower(~0);
+						LL_AHB2_GRP1_DisableClockLowPower(~0);
+						LL_AHB3_GRP1_DisableClockLowPower(~0);
+						LL_AHB4_GRP1_DisableClockLowPower(~0);
+						LL_AHB4_GRP1_EnableClockLowPower(LL_AHB4_GRP1_PERIPH_PWR);
+						LL_AHB5_GRP1_DisableClockLowPower(~0);
+						LL_APB1_GRP1_DisableClockLowPower(~0);
+						LL_APB1_GRP1_EnableClockLowPower(LL_APB1_GRP1_PERIPH_LPTIM1);
+						LL_APB1_GRP2_DisableClockLowPower(~0);
+						LL_APB2_GRP1_DisableClockLowPower(~0);
+						LL_APB4_GRP1_DisableClockLowPower(~0);
+						LL_APB4_GRP2_DisableClockLowPower(~0);
+						LL_APB5_GRP1_DisableClockLowPower(~0);
+						LL_MISC_DisableClockLowPower(~0);
+
 						HAL_SuspendTick();
 						HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 
 						/* Same ordering rule as strategy 3: resume tick before any
 						 * call that (indirectly) uses HAL_Delay()/vTaskDelay(). */
 						HAL_ResumeTick();
+
+						/* Restore the boot-time "keep everything alive" policy before
+						 * the rest of the FSM resumes normal operation. */
+						LL_BUS_EnableClockLowPower(~0);
+						LL_MEM_EnableClockLowPower(~0);
+						LL_AHB1_GRP1_EnableClockLowPower(~0);
+						LL_AHB2_GRP1_EnableClockLowPower(~0);
+						LL_AHB3_GRP1_EnableClockLowPower(~0);
+						LL_AHB4_GRP1_EnableClockLowPower(~0);
+						LL_AHB5_GRP1_EnableClockLowPower(~0);
+						LL_APB1_GRP1_EnableClockLowPower(~0);
+						LL_APB1_GRP2_EnableClockLowPower(~0);
+						LL_APB2_GRP1_EnableClockLowPower(~0);
+						LL_APB4_GRP1_EnableClockLowPower(~0);
+						LL_APB4_GRP2_EnableClockLowPower(~0);
+						LL_APB5_GRP1_EnableClockLowPower(~0);
+						LL_MISC_EnableClockLowPower(~0);
+
 						SystemClock_Config(); /* PLLs back ON, full speed restored */
 
 						/* MSI is no longer selected as CPUCLK/SYSCLK source at this
