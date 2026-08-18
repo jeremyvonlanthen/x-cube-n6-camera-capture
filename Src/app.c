@@ -185,15 +185,14 @@ void app_run(void)
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
 
-	#if (DEBUG_KEEP_SWD_ALIVE_IN_LOWPOWER == 1)
-	/* Without this, DBGMCU (and so SWD/ST-LINK) loses power/clock as soon as
-	 * the core enters SLEEP/STOP, forcing a reconnect on every wake and
-	 * eventually a failed halt -- exactly the "Could not halt device" seen
-	 * when single-stepping/breakpointing strategies 2 and 3. Remove/disable
-	 * before measuring real current: this keeps extra clocks running. */
+	#if 0
+	/* 0: measurement mode: play with `RUN` and disconnect ST-Link USB
+	 * 1: debugging mode: play with `Debug` but assume extra consumption current */
 	HAL_DBGMCU_EnableDBGSleepMode();
 	HAL_DBGMCU_EnableDBGStopMode();
 	HAL_DBGMCU_EnableDBGStandbyMode();
+
+	LED_mode();
 	#endif
 
 	char timestamp[20];
@@ -201,8 +200,6 @@ void app_run(void)
 
 	while(1)
 	{
-		//LED_mode();
-
 		switch(state)
 		{
 		case CONFIG_MODE_WARMUP:
@@ -343,28 +340,13 @@ void app_run(void)
 					HAL_Delay(sleep_duration_ms);
 
 			#elif (SLEEP_STRATEGY == 2)
-					// 2. Mode SLEEP (CSLEEP) : un seul WFI dimensionné exactement sur
-					// sleep_duration_ms via le LPTIM1. Volontairement explicite (plutôt
-					// que de compter sur le tickless-idle de FreeRTOS) pour avoir une
-					// mesure reproductible, indépendante des autres tâches RTOS.
+					// 2. Mode STOP (CSTOP) : coeur + bus + PLL1..4 coupés.
 					if (sleep_duration_ms > 0) {
-						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
-						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
-
-						hlptim1.Init.Period = period_ticks;
-						HAL_LPTIM_Init(&hlptim1);
-						HAL_LPTIM_Counter_Start_IT(&hlptim1);
-
-						HAL_SuspendTick();
-						HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
-						/* SLEEP ne coupe ni les bus ni les PLL: pas de resync horloge. */
-						HAL_ResumeTick();
-					}
-
-			#elif (SLEEP_STRATEGY == 3)
-					// 3. Mode STOP (CSTOP) : coeur + bus + PLL1..4 coupés.
-					if (sleep_duration_ms > 0) {
-						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
+						/* LSI is uncalibrated: use the empirically-measured frequency,
+						 * not the nominal 32kHz, or the sleep duration drifts (measured
+						 * 788ms actual for a requested 900ms with the nominal value).
+						 * See LPTIM_LSI_FREQ_HZ in app_shared.h for how to recalibrate. */
+						uint32_t period_ticks = (uint32_t)(((uint64_t)sleep_duration_ms * LPTIM_LSI_FREQ_HZ) / 1000);
 						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
 
 						hlptim1.Init.Period = period_ticks;
@@ -413,7 +395,7 @@ void app_run(void)
 						/* DIAGNOSTIC: proves WFE actually returned (LPTIM wake worked).
 						 * Stays solid ON forever if SystemClock_Config() hangs below
 						 * (it has a bare while(1) on PLL relock failure) -- remove once
-						 * strategy 3 is confirmed stable. */
+						 * strategy 2 is confirmed stable. */
 						BSP_LED_On(LED_RED);
 
 						#if (STOP_MODE_NARROW_CLOCKS == 1)
@@ -447,8 +429,8 @@ void app_run(void)
 						BSP_LED_Off(LED_RED); /* reached only if OscConfig/ClockConfig didn't trap */
 					}
 
-			#elif (SLEEP_STRATEGY == 4)
-					// 4. SLEEP mode (confirmed reliable) + manual PLL shutdown: STOP
+			#elif (SLEEP_STRATEGY == 3)
+					// 3. SLEEP mode (confirmed reliable) + manual PLL shutdown: STOP
 					// mode's LPTIM wake-up doesn't come back on this board (see
 					// ST ticket), so instead of chasing that further, attack the
 					// actual suspected dominant power draw directly while staying
@@ -456,10 +438,14 @@ void app_run(void)
 					// CPUCLK/SYSCLK off the PLL tree onto HSI directly, then switch
 					// PLL1..4 OFF (must be done in that order -- a PLL can't be
 					// disabled while still selected as a clock source). On wake:
-					// SystemClock_Config() (already used by strategy 3, known
+					// SystemClock_Config() (already used by strategy 2, known
 					// working) puts the PLLs back and restores full speed.
 					if (sleep_duration_ms > 0) {
-						uint32_t period_ticks = sleep_duration_ms * 32; /* LSI ~32kHz */
+						/* LSI is uncalibrated: use the empirically-measured frequency,
+						 * not the nominal 32kHz, or the sleep duration drifts (measured
+						 * 788ms actual for a requested 900ms with the nominal value).
+						 * See LPTIM_LSI_FREQ_HZ in app_shared.h for how to recalibrate. */
+						uint32_t period_ticks = (uint32_t)(((uint64_t)sleep_duration_ms * LPTIM_LSI_FREQ_HZ) / 1000);
 						if (period_ticks > 0xFFFF) period_ticks = 0xFFFF;
 
 						hlptim1.Init.Period = period_ticks;
@@ -500,7 +486,7 @@ void app_run(void)
 						 * carries PWR's own bit -- gating it broke this same test
 						 * last time). SLEEP wakes via plain NVIC, not the PWR/EXTI
 						 * deep-sleep circuit, so this should be safer here than it
-						 * was for strategy 3's STOP mode. */
+						 * was for strategy 2's STOP mode. */
 						LL_BUS_DisableClockLowPower(~0);
 						LL_MEM_DisableClockLowPower(~0);
 						LL_AHB1_GRP1_DisableClockLowPower(~0);
@@ -521,7 +507,7 @@ void app_run(void)
 						HAL_SuspendTick();
 						HAL_PWR_EnterSLEEPMode(PWR_MAINREGULATOR_ON, PWR_SLEEPENTRY_WFI);
 
-						/* Same ordering rule as strategy 3: resume tick before any
+						/* Same ordering rule as strategy 2: resume tick before any
 						 * call that (indirectly) uses HAL_Delay()/vTaskDelay(). */
 						HAL_ResumeTick();
 
