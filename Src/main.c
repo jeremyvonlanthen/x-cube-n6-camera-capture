@@ -21,6 +21,7 @@
 #include "app.h"
 #include "app_config.h"
 #include "app_fuseprogramming.h"
+#include "app_sleep.h"
 #include "main.h"
 #include "npu_cache.h"
 #ifdef STM32N6570_DK_REV
@@ -56,7 +57,7 @@ volatile int rtc_ready = 0;   /* 1 once HAL_RTC_Init succeeded */
 static StaticTask_t main_thread;
 static StackType_t main_thread_stack[MAIN_THREAD_STACK_SIZE];
 
-static void SystemClock_Config(void);
+void SystemClock_Config(void);
 static void Security_Config();
 static void IAC_Config();
 static void CONSOLE_Config(void);
@@ -163,7 +164,7 @@ void IAC_IRQHandler(void)
   }
 }
 
-static void SystemClock_Config(void)
+void SystemClock_Config(void)
 {
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
@@ -448,6 +449,7 @@ static void main_thread_fct(void *arg)
   RAMCFG_SRAM6_AXI_S->CR &= ~(1UL << 20);
 
   RTC_Config();
+  app_sleep_init();
 
   app_run();
 

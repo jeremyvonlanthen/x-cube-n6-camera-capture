@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 #include "stm32n6xx_hal.h"
-#include "app_jpg.h"        /* JPG_conf_t */
+#include "app_jpg.h"
 
 /* --- Constantes partagees --- */
 #define SENSOR_WIDTH          2592
@@ -20,6 +20,31 @@
 
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)
+
+/* DEBUG_MODE
+ * 0: measurement mode: play with `RUN` and disconnect ST-Link USB
+ * 1: debugging mode: play with `Debug` but assume extra consumption current */
+#define DEBUG_MODE 0
+
+/* LPTIM1 wake-up timer clock frequency, in Hz, used to convert a requested
+ * sleep duration (ms) into an auto-reload tick count. The LSI is an
+ * uncalibrated RC oscillator: its datasheet-nominal ~32kHz can be off by
+ * 30-40% in practice.
+ *
+ * How to recalibrate this constant (needed again if you change board, unit,
+ * or run at a very different temperature -- LSI drifts with all three):
+ *   1. Pick a strategy that sleeps for a known, fixed duration each cycle
+ *      (e.g. force sleep_duration_ms to a constant like 1000 for the test).
+ *   2. Measure the ACTUAL elapsed sleep time with something independent of
+ *      this firmware's own clock (oscilloscope/logic analyzer on the
+ *      LED_GREEN pin, or just time the blink period with a stopwatch over
+ *      many cycles for a rough number).
+ *   3. new_value = LPTIM_LSI_FREQ_HZ * (requested_ms / measured_ms)
+ *   4. Update the constant, reflash, remeasure -- repeat once more if the
+ *      new measurement is still off by more than your tolerance.
+ * A rigorous fix would measure LSI at runtime against a known reference
+ * clock instead of trusting a fixed constant recalibrated by hand. */
+#define LPTIM_LSI_FREQ_HZ 42350u
 
 /* --- Types partages --- */
 typedef struct __attribute__((packed))
@@ -58,6 +83,8 @@ typedef enum
 extern UART_HandleTypeDef huart1;              /* main.c */
 extern DCMIPP_HandleTypeDef hcamera_dcmipp;    /* app_cam.c */
 extern volatile uint32_t dcmipp_err_count;     /* app_cam.c */
+
+void SystemClock_Config(void);                 /* main.c */
 
 /* --- Etat partage (defini dans app.c) --- */
 extern Config_t config_py;

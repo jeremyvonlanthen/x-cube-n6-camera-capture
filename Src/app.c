@@ -42,6 +42,7 @@
 #include "app_record.h"
 #include "app_callbacks.h"
 #include "app_rec.h"
+#include "app_sleep.h"
 
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_hal_dcmipp.h"
@@ -185,12 +186,20 @@ void app_run(void)
 	/* TAMP button read by polling in MOVEMENT_DETECTION */
 	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
 
+	#if DEBUG_MODE
+	HAL_DBGMCU_EnableDBGSleepMode();
+	HAL_DBGMCU_EnableDBGStopMode();
+	HAL_DBGMCU_EnableDBGStandbyMode();
+	#endif
+
 	char timestamp[20];
 	int rec_files_height = 1080; // 480, 720, 960, 1080 (max)
 
 	while(1)
 	{
+		#if DEBUG_MODE
 		LED_mode();
+		#endif
 
 		switch(state)
 		{
@@ -271,7 +280,7 @@ void app_run(void)
 				}
 			}
 
-			vTaskDelay(pdMS_TO_TICKS(2000));
+			sleep_short_period(2000);
 			break;
 
 		case OP_WINDOW_CHECK:
@@ -288,7 +297,8 @@ void app_run(void)
 				state = RECORD_MODE_INIT;
 				break;
 			}
-			vTaskDelay(pdMS_TO_TICKS(1000));
+			sleep_short_period(1000);
+
 			state = SD_CARD;
 			break;
 

@@ -23,6 +23,7 @@
 #include "stm32n6570_discovery_sd.h"
 
 #include "cmw_camera.h"
+#include "app_sleep.h"
 
 /**
   * @brief   This function handles NMI exception.
@@ -127,4 +128,10 @@ void JPEG_IRQHandler(void)
 void EXTI13_IRQHandler(void)  // à adapter selon BUTTON_USER1_EXTI_IRQn
 {
     BSP_PB_IRQHandler(BUTTON_USER1);
+}
+
+/* LPTIM1 wakes the CPU from SLEEP mode in sleep_short_period() (app_sleep.c) */
+void LPTIM1_IRQHandler(void)
+{
+  APP_SLEEP_LPTIM_IRQHandler();
 }
