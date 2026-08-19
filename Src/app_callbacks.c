@@ -7,7 +7,6 @@
 #include "app_callbacks.h"
 #include "app_shared.h"
 
-#include <stdio.h>
 #include "app_cam.h"
 #include "cmw_camera.h"
 #include "stm32n6xx_hal.h"
@@ -49,8 +48,9 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
 void BSP_PB_Callback(Button_TypeDef Button)
 {
   if(Button == BUTTON_USER1){
-  	state = SD_CARD;
-  	printf("[FSM] RESTART OF THE CONFIG PROCEDURE...\r\n");
+  	if(state <= MOVEMENT_DETECTION){
+  		restart_requested = 1;
+  	}
   }
 }
 

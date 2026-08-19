@@ -100,6 +100,7 @@ extern volatile int frame_ready;
 extern volatile int warmup_frames;
 extern volatile int warmup_done;
 extern volatile int uart_busy;
+extern volatile int restart_requested;  /* set by BSP_PB_Callback (ISR), consumed by app_run() */
 
 extern volatile int h264_streaming;
 extern volatile int h264_frame_ready;

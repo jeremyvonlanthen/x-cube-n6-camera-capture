@@ -55,6 +55,17 @@ void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
 
   HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE1, DCMIPP_VIRTUAL_CHANNEL0);
   vTaskDelay(pdMS_TO_TICKS(50));
+
+  snapshot_in_progress = 1;
+  frame_ready = 0;
+  CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
+  {
+    uint32_t discard_start = HAL_GetTick();
+    while (!frame_ready && HAL_GetTick() - discard_start < 1000)
+      vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  snapshot_in_progress = 0;
+
   if (two_pipes) {
     HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE2, DCMIPP_VIRTUAL_CHANNEL0);
     vTaskDelay(pdMS_TO_TICKS(50));

@@ -12,7 +12,7 @@ Nouveautés :
   - Envoi de la date/heure courante au µC (commande 'T') avant la config
   - Thème clair, interface en français
 
-Dépendances : PyQt6, matplotlib, numpy, Pillow, pyserial
+Dépendances : PyQt6, numpy, Pillow, pyserial
 Usage       : python camera_config_gui.py
 """
 
@@ -26,20 +26,18 @@ import numpy as np
 from io import BytesIO
 from datetime import datetime
 
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
-import matplotlib.patches as patches
-
 from PIL import Image
 
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QGridLayout, QLabel, QLineEdit, QPushButton,
-    QFrame, QGroupBox, QSizePolicy, QTextEdit,
+    QFrame, QGroupBox, QSizePolicy, QTextEdit, QStackedWidget,
+    QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem,
+    QGraphicsLineItem, QGraphicsSimpleTextItem, QGraphicsItem,
+    QButtonGroup, QCheckBox,
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont, QIntValidator, QPixmap
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QRectF
+from PyQt6.QtGui import QFont, QIntValidator, QPixmap, QPen, QBrush, QColor, QImage, QPainter
 
 # =============================================================================
 #  Constantes
@@ -52,6 +50,18 @@ POLL_MS        = 1500        # période de polling des ports série
 BG             = "#f4f6fa"   # fond clair
 FG             = "#2a3442"
 MAX_DOWNSIZE   = 7.99   # downsize_ratio max (jamais 8 exactement)
+HANDLE_PX      = 9      # taille visuelle d'une poignée de redimensionnement (px écran)
+MIN_CROP_PX    = 4      # taille mini d'un côté de zone de crop (px image)
+AXIS_TICK_STEP        = 100  # pas de graduation, en pixels image
+# Marges réservées à la graduation/au titre, en pixels ÉCRAN visés (comme le
+# texte lui-même via ItemIgnoresTransformations) -- converties en unités de
+# scène (~ pixels image) selon le zoom courant dans set_image()/_layout_axes().
+# En pixels image fixes, elles deviendraient négligeables une fois l'image
+# (2592x1944) réduite à l'affichage, et la photo finirait par occuper
+# quasiment tout le viewport au lieu de laisser une marge lisible.
+AXIS_LEFT_MARGIN_PX   = 42
+AXIS_TOP_MARGIN_PX    = 26
+AXIS_BOTTOM_MARGIN_PX = 20
 
 # =============================================================================
 #  Calcul decimation pipe 2
@@ -71,119 +81,317 @@ def compute_pipe2_params(block_size):
     return None, None
 
 # =============================================================================
-#  Rendu matplotlib → QPixmap
+#  Widget d'affichage (placeholder avant la première capture)
 # =============================================================================
+#  Au-delà de la première capture, InteractiveCropView est la SEULE vue
+#  utilisée, config appliquée ou non -- les rectangles de crop sont juste
+#  ajoutés/retirés de sa scène. La graduation/le titre sont donc toujours
+#  rendus par exactement le même code, dans les deux cas : aucun risque de
+#  divergence de style/position entre "appliqué" et "retiré".
 
-def fig_to_pixmap(fig, dpi=90):
-    buf = BytesIO()
-    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight',
-                facecolor=fig.get_facecolor())
-    buf.seek(0)
-    pix = QPixmap()
-    pix.loadFromData(buf.read(), "PNG")
-    return pix
-
-
-def make_raw_pixmap(img, size):
-    """Image brute avec graduation."""
-    w_px, h_px = size
-    dpi = 90
-    fig, ax = plt.subplots(figsize=(w_px / dpi, h_px / dpi))
-    fig.patch.set_facecolor(BG)
-    ax.set_facecolor(BG)
-    h, w = img.shape[:2]
-    ax.imshow(img, aspect='equal')
-    ax.set_xticks(np.arange(0, w, 100))
-    ax.set_yticks(np.arange(0, h, 100))
-    ax.tick_params(colors='#5a6a80', labelsize=7)
-    for sp in ax.spines.values():
-        sp.set_edgecolor('#b8c4d4')
-    ax.set_title("Capture — graduation en pixels", color=FG, fontsize=9, pad=4)
-    fig.tight_layout(pad=0.3)
-    pix = fig_to_pixmap(fig, dpi=dpi)
-    plt.close(fig)
-    return pix
-
-
-def make_preview_pixmap(img, p1_top, p1_bot, p1_left, p1_right,
-                         p2_top, p2_bot, p2_left, p2_right, size):
-    """Image avec zones pipe 1 (rouge) et pipe 2 (bleu), crop H et V."""
-    w_px, h_px = size
-    dpi = 90
-    fig, ax = plt.subplots(figsize=(w_px / dpi, h_px / dpi))
-    fig.patch.set_facecolor(BG)
-    ax.set_facecolor(BG)
-    h, w = img.shape[:2]
-    ax.imshow(img, aspect='equal')
-
-    # Pipe 1 — rouge : rectangle délimité par les 4 bords
-    ax.add_patch(patches.Rectangle(
-        (p1_left, p1_top), p1_right - p1_left, p1_bot - p1_top,
-        linewidth=1.5, edgecolor='#d43a3a', facecolor='#d43a3a', alpha=0.25))
-    ax.text(p1_left + 8, (p1_top + p1_bot) / 2, "Pipe 1", color='#d43a3a', fontsize=8,
-            va='center', bbox=dict(facecolor='white', alpha=0.6, pad=1, edgecolor='none'))
-
-    # Pipe 2 — bleu : rectangle délimité par les 4 bords
-    ax.add_patch(patches.Rectangle(
-        (p2_left, p2_top), p2_right - p2_left, p2_bot - p2_top,
-        linewidth=1.5, edgecolor='#2a5ad4', facecolor='#2a5ad4', alpha=0.25))
-    ax.text(p2_left + 8, (p2_top + p2_bot) / 2, "Pipe 2", color='#2a5ad4', fontsize=8,
-            va='center', bbox=dict(facecolor='white', alpha=0.6, pad=1, edgecolor='none'))
-
-    ax.set_xticks(np.arange(0, w, 100))
-    ax.set_yticks(np.arange(0, h, 100))
-    ax.tick_params(colors='#5a6a80', labelsize=7)
-    for sp in ax.spines.values():
-        sp.set_edgecolor('#b8c4d4')
-    ax.set_title("Test de la config — graduation en pixels", color=FG, fontsize=9, pad=4)
-    fig.tight_layout(pad=0.3)
-    pix = fig_to_pixmap(fig, dpi=dpi)
-    plt.close(fig)
-    return pix
+def make_placeholder_label():
+    label = QLabel("Aucune image capturée")
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+    label.setMinimumSize(400, 300)
+    label.setStyleSheet(
+        f"background-color: {BG}; border: 1px solid #b8c4d4;"
+        "color: #8a96a8; font-size: 13px; font-family: 'Segoe UI';"
+    )
+    return label
 
 # =============================================================================
-#  Widget d'affichage
+#  Zone de crop interactive (redimensionnable à la souris, façon Word)
 # =============================================================================
 
-class ImageDisplay(QLabel):
+class HandleRectItem(QGraphicsRectItem):
+    """Rectangle de crop déplaçable/redimensionnable à la souris : coins et
+    côtés agissent comme des poignées de redimensionnement, l'intérieur
+    déplace tout le rectangle. Les coordonnées du rect() sont directement en
+    pixels image (l'item n'a ni rotation ni décalage de position — seule la
+    QGraphicsView applique un facteur d'échelle à l'affichage)."""
+
+    _CURSORS = {
+        'nw': Qt.CursorShape.SizeFDiagCursor, 'se': Qt.CursorShape.SizeFDiagCursor,
+        'ne': Qt.CursorShape.SizeBDiagCursor, 'sw': Qt.CursorShape.SizeBDiagCursor,
+        'n':  Qt.CursorShape.SizeVerCursor,   's':  Qt.CursorShape.SizeVerCursor,
+        'e':  Qt.CursorShape.SizeHorCursor,   'w':  Qt.CursorShape.SizeHorCursor,
+        'move': Qt.CursorShape.OpenHandCursor,
+    }
+
+    def __init__(self, rect, color, img_w, img_h, on_change):
+        super().__init__(rect)
+        self._img_w      = img_w
+        self._img_h      = img_h
+        self.on_change   = on_change     # callback(top, bottom, left, right)
+        self._mode       = None
+        self._drag_start = None
+        self._rect_start = None
+        self._active     = True
+
+        pen = QPen(QColor(color)); pen.setWidth(2); pen.setCosmetic(True)
+        self.setPen(pen)
+        self.setBrush(QBrush(QColor(color)))
+        self.setOpacity(0.30)
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def set_active(self, active):
+        """Seule la zone active répond à la souris — évite qu'une zone
+        cachée sous l'autre (chevauchement) ne vole les clics destinés à
+        celle du dessous.
+        No-op si l'état ne change pas : set_rect() appelle ceci à chaque
+        mise à jour (y compris celles déclenchées par le glisser-déposer
+        lui-même, via le sync champs<->rect) -- sans ce garde-fou, un
+        déplacement en cours se voyait couper après le premier mouvement
+        (_mode remis à None en plein glisser)."""
+        if self._active == active:
+            return
+        self._active = active
+        self._mode = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor if active else Qt.CursorShape.ArrowCursor)
+
+    # ── détection de poignée ────────────────────────────────────────────────
+    def _handle_size(self):
+        views = self.scene().views() if self.scene() else []
+        scale = views[0].transform().m11() if views else 1.0
+        if scale <= 0:
+            scale = 1.0
+        return max(HANDLE_PX / scale, MIN_CROP_PX)
+
+    def _zone_at(self, pos):
+        r = self.rect()
+        h = self._handle_size()
+        near_top    = abs(pos.y() - r.top())    <= h
+        near_bottom = abs(pos.y() - r.bottom()) <= h
+        near_left   = abs(pos.x() - r.left())   <= h
+        near_right  = abs(pos.x() - r.right())  <= h
+        if near_top and near_left:     return 'nw'
+        if near_top and near_right:    return 'ne'
+        if near_bottom and near_left:  return 'sw'
+        if near_bottom and near_right: return 'se'
+        if near_top:    return 'n'
+        if near_bottom: return 's'
+        if near_left:   return 'w'
+        if near_right:  return 'e'
+        if r.contains(pos):
+            return 'move'
+        return None
+
+    # ── interaction souris ───────────────────────────────────────────────────
+    def hoverMoveEvent(self, event):
+        if not self._active:
+            return
+        zone = self._zone_at(event.pos())
+        self.setCursor(self._CURSORS.get(zone, Qt.CursorShape.ArrowCursor))
+        super().hoverMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if not self._active:
+            # Laisse l'évènement descendre à la zone du dessous (active).
+            event.ignore()
+            return
+        self._mode       = self._zone_at(event.pos())
+        self._drag_start = event.pos()
+        self._rect_start = QRectF(self.rect())
+        if self._mode == 'move':
+            self.setCursor(Qt.CursorShape.ClosedHandCursor)
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self._mode is None:
+            return
+        d = event.pos() - self._drag_start
+        r = QRectF(self._rect_start)
+
+        if self._mode == 'move':
+            r.translate(d.x(), d.y())
+            r = self._clamp_move(r)
+        else:
+            # Chaque bord déplacé est borné par rapport au bord OPPOSÉ (qui,
+            # lui, reste fixe) et par les limites de l'image — un simple
+            # clamp global sur le rect final ferait bouger le bord fixe au
+            # lieu de simplement arrêter le bord tiré.
+            if 'n' in self._mode:
+                top = r.top() + d.y()
+                r.setTop(max(0, min(top, r.bottom() - MIN_CROP_PX)))
+            if 's' in self._mode:
+                bottom = r.bottom() + d.y()
+                r.setBottom(min(self._img_h, max(bottom, r.top() + MIN_CROP_PX)))
+            if 'w' in self._mode:
+                left = r.left() + d.x()
+                r.setLeft(max(0, min(left, r.right() - MIN_CROP_PX)))
+            if 'e' in self._mode:
+                right = r.right() + d.x()
+                r.setRight(min(self._img_w, max(right, r.left() + MIN_CROP_PX)))
+
+        self.setRect(r)
+        if self.on_change:
+            self.on_change(int(round(r.top())), int(round(r.bottom())),
+                            int(round(r.left())), int(round(r.right())))
+
+    def mouseReleaseEvent(self, event):
+        self._mode = None
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def _clamp_move(self, r):
+        """Déplacement pur : la taille ne change pas, seule la position est
+        bornée pour rester dans l'image."""
+        w, h = r.width(), r.height()
+        left = min(max(r.left(), 0), max(self._img_w - w, 0))
+        top  = min(max(r.top(),  0), max(self._img_h - h, 0))
+        return QRectF(left, top, w, h)
+
+
+class InteractiveCropView(QGraphicsView):
+    """Affiche l'image capturée et superpose les zones pipe1/pipe2
+    redimensionnables (HandleRectItem)."""
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._scene = QGraphicsScene(self)
+        self.setScene(self._scene)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing)
+        self.setStyleSheet(f"background-color: {BG}; border: 1px solid #b8c4d4;")
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(400, 300)
-        self._pixmap_full = None
-        self._show_placeholder()
+        self._pix_item  = None
+        self._rect_items = {}
+        self._axis_items = []
+        self._img_w = self._img_h = 0
+        self._left_margin = self._top_margin = self._bottom_margin = 0
+        self._active_key = 'p1'
 
-    def _show_placeholder(self):
-        self.setText("Aucune image capturée")
-        self.setStyleSheet(
-            f"background-color: {BG}; border: 1px solid #b8c4d4;"
-            "color: #8a96a8; font-size: 13px; font-family: 'Segoe UI';"
-        )
+    def set_image(self, img_np):
+        h, w = img_np.shape[:2]
+        buf = np.ascontiguousarray(img_np)
+        qimg = QImage(buf.data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+        pix = QPixmap.fromImage(qimg)
+        if self._pix_item is None:
+            self._pix_item = QGraphicsPixmapItem(pix)
+            self._scene.addItem(self._pix_item)
+        else:
+            self._pix_item.setPixmap(pix)
+        self._img_w, self._img_h = w, h
+        self._layout_axes()
+        self._fit()
 
-    def set_pixmap(self, pixmap):
-        self._pixmap_full = pixmap
-        self.setStyleSheet(f"background-color: {BG}; border: 1px solid #b8c4d4;")
-        self.setText("")
-        self._rescale()
+    def _layout_axes(self):
+        """(Re)calcule les marges (en unités de scène) pour qu'elles
+        occupent la taille écran visée (AXIS_*_MARGIN_PX), puis redessine
+        la graduation/le titre avec ces marges. Appelé à chaque nouvelle
+        image et à chaque redimensionnement de la vue -- le zoom fitInView
+        change avec la taille du widget, donc la conversion écran->scène
+        aussi."""
+        if self._img_w <= 0:
+            return
+        approx_scale = self.viewport().width() / self._img_w
+        if approx_scale <= 0:
+            approx_scale = 1.0
+        self._left_margin   = AXIS_LEFT_MARGIN_PX   / approx_scale
+        self._top_margin    = AXIS_TOP_MARGIN_PX    / approx_scale
+        self._bottom_margin = AXIS_BOTTOM_MARGIN_PX / approx_scale
+        self._scene.setSceneRect(
+            -self._left_margin, -self._top_margin,
+            self._img_w + self._left_margin,
+            self._img_h + self._top_margin + self._bottom_margin)
+        self._draw_axes(self._img_w, self._img_h)
 
-    def clear_image(self):
-        """Efface l'image affichée et remet le placeholder."""
-        self._pixmap_full = None
-        self.clear()
-        self._show_placeholder()
+    def _draw_axes(self, w, h):
+        """Graduation en pixels + titre -- toujours affichés, config
+        appliquée ou non, par exactement ce même code (donc jamais de
+        divergence de style/position entre les deux), à taille d'écran
+        constante (ItemIgnoresTransformations). Dessinés en dehors de
+        l'image (marges négatives/en bas) donc sans jamais recouvrir la
+        photo ni les zones de crop."""
+        for it in self._axis_items:
+            self._scene.removeItem(it)
+        self._axis_items = []
 
-    def _rescale(self):
-        if self._pixmap_full and not self._pixmap_full.isNull():
-            scaled = self._pixmap_full.scaled(
-                self.width(), self.height(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            self.setPixmap(scaled)
+        tick_pen = QPen(QColor('#b8c4d4')); tick_pen.setWidth(1); tick_pen.setCosmetic(True)
+        label_font = QFont("Segoe UI", 7)
+        label_brush = QBrush(QColor('#5a6a80'))
+
+        def add_line(x1, y1, x2, y2):
+            line = QGraphicsLineItem(x1, y1, x2, y2)
+            line.setPen(tick_pen)
+            self._scene.addItem(line)
+            self._axis_items.append(line)
+
+        def add_text(x, y, text, font=label_font, brush=label_brush):
+            item = QGraphicsSimpleTextItem(text)
+            item.setFont(font)
+            item.setBrush(brush)
+            # Sans ce flag, la taille du texte suit le zoom fitInView de la
+            # vue (image 2592px compressée dans le widget) et devient
+            # illisible -- avec, il garde toujours sa taille écran réelle.
+            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+            item.setPos(x, y)
+            self._scene.addItem(item)
+            self._axis_items.append(item)
+
+        x = 0
+        while x < w:
+            add_line(x, h, x, h + 5)
+            add_text(x - 10, h + 6, str(x))
+            x += AXIS_TICK_STEP
+
+        y = 0
+        while y < h:
+            add_line(-5, y, 0, y)
+            add_text(-self._left_margin + 4, y - 6, str(y))
+            y += AXIS_TICK_STEP
+
+        title_font  = QFont("Segoe UI", 9)
+        title_brush = QBrush(QColor(FG))
+        title = QGraphicsSimpleTextItem("Capture — graduation en pixels")
+        title.setFont(title_font)
+        title.setBrush(title_brush)
+        title.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+        title.setPos(w / 2 - title.boundingRect().width() / 2, -self._top_margin + 4)
+        self._scene.addItem(title)
+        self._axis_items.append(title)
+
+    def set_rect(self, key, top, bottom, left, right, color, on_change):
+        """Crée ou repositionne la zone `key` ('p1'/'p2') sur les coordonnées
+        données — toujours utilisées comme coordonnées de base (comme le
+        faisait l'ancien aperçu statique)."""
+        rect = QRectF(left, top, right - left, bottom - top)
+        item = self._rect_items.get(key)
+        if item is None:
+            item = HandleRectItem(rect, color, self._img_w, self._img_h, on_change)
+            self._scene.addItem(item)
+            self._rect_items[key] = item
+        else:
+            item._img_w, item._img_h = self._img_w, self._img_h
+            item.on_change = on_change
+            item.setRect(rect)
+        item.setZValue(1 if key == self._active_key else 0)
+        item.set_active(key == self._active_key)
+
+    def set_active_pipe(self, key):
+        """Seule la zone `key` reste modifiable à la souris — évite qu'une
+        zone chevauchante ne bloque l'accès aux poignées de l'autre."""
+        self._active_key = key
+        for k, item in self._rect_items.items():
+            item.setZValue(1 if k == key else 0)
+            item.set_active(k == key)
+
+    def clear_rects(self):
+        for item in self._rect_items.values():
+            self._scene.removeItem(item)
+        self._rect_items = {}
+
+    def _fit(self):
+        if self._pix_item is not None:
+            self.fitInView(self._scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
 
     def resizeEvent(self, event):
-        self._rescale()
+        # Le facteur d'échelle change avec la taille du widget -- sans ce
+        # recalcul, les marges de graduation (dimensionnées pour une taille
+        # écran constante) redeviennent fausses après un redimensionnement.
+        self._layout_axes()
+        self._fit()
         super().resizeEvent(event)
 
 # =============================================================================
@@ -420,7 +628,8 @@ QLineEdit {
     font-size: 11px;
 }
 QLineEdit:focus { border-color: #4a7ad4; }
-QLineEdit:disabled { color: #9aa4b4; background-color: #eceff5; }
+QLineEdit:disabled { color: #aab2c0; background-color: #f0f2f6; border-color: #dde2ea; }
+QLineEdit:read-only { color: #aab2c0; background-color: #f0f2f6; border-color: #dde2ea; }
 QComboBox {
     background-color: #ffffff;
     border: 1px solid #c9d2e0;
@@ -469,6 +678,17 @@ QPushButton#btn-send:enabled { background-color: #7a9ce0; border-color: #4a6ac4;
 QPushButton#btn-send:enabled:hover  { background-color: #6488d6; }
 QPushButton#btn-send:enabled:pressed { background-color: #5578c8; }
 QPushButton#btn-send:disabled { background-color: #f0f2f6; border-color: #dde2ea; color: #b0b8c4; }
+
+/* Sélecteur de zone active (édition à la souris) : couleur = zone concernée,
+ * pleine quand sélectionnée, pastel sinon -- toujours identifiable. */
+QPushButton#btn-pipe1:checked { background-color: #d43a3a; border-color: #b32e2e; color: #ffffff; }
+QPushButton#btn-pipe2:checked { background-color: #2a5ad4; border-color: #1f45ad; color: #ffffff; }
+QPushButton#btn-pipe1:enabled:!checked { background-color: #f6d6d6; border-color: #e8b0b0; color: #8a3a3a; }
+QPushButton#btn-pipe2:enabled:!checked { background-color: #d6e3f7; border-color: #b0c8ec; color: #3a5a8a; }
+QPushButton#btn-pipe1:disabled, QPushButton#btn-pipe2:disabled {
+    background-color: #f0f2f6; border-color: #dde2ea; color: #b0b8c4;
+}
+
 QLabel#dtclock {
     color: #2a5ad4;
     font-family: 'Consolas', 'Courier New', monospace;
@@ -520,9 +740,10 @@ class MainWindow(QMainWindow):
 
         self._ready    = False   # µC prêt (message "wait for send yuv frame")
         self._captured = False   # une capture a réussi
-        self._tested   = False   # « Tester » pressé depuis la dernière capture
+        self._tested   = False   # config actuellement « appliquée » (aperçu interactif affiché)
         self._sent     = False   # config envoyée (fin de session)
         self._busy     = False   # capture/envoi en cours
+        self._active_pipe = 'p1' # zone modifiable à la souris (persiste entre les applications)
 
         self._build_ui()
         self._connect_signals()
@@ -589,8 +810,47 @@ class MainWindow(QMainWindow):
 
         s1 = QFrame(); s1.setObjectName("sep"); ll.addWidget(s1)
 
+        # ── Appliquer/retirer + zone active + déverrouillage manuel ──────────
+        apply_group = QGroupBox("Aperçu et édition de la config")
+        agl = QVBoxLayout(apply_group)
+        agl.setSpacing(8)
+
+        # Appliquer / retirer la config (bascule l'aperçu interactif)
+        self.btn_apply = QPushButton("Appliquer la config")
+        self.btn_apply.setObjectName("btn-try")
+        self.btn_apply.setMinimumHeight(32)
+        agl.addWidget(self.btn_apply)
+
+        # Sélecteur de zone active : quand les zones pipe1/pipe2 se
+        # chevauchent, celle du dessous ne peut pas être attrapée à la
+        # souris — on choisit ici laquelle des deux répond au glisser.
+        # Toujours affiché, mais grisé tant qu'aucune zone n'est appliquée.
+        self.active_bar = QWidget()
+        abl = QHBoxLayout(self.active_bar)
+        abl.setContentsMargins(0, 0, 0, 0); abl.setSpacing(6)
+        abl.addWidget(_lbl("Zone à modifier :"))
+        self.btn_active_p1 = QPushButton("Pipe 1"); self.btn_active_p1.setObjectName("btn-pipe1")
+        self.btn_active_p2 = QPushButton("Pipe 2"); self.btn_active_p2.setObjectName("btn-pipe2")
+        for b in (self.btn_active_p1, self.btn_active_p2):
+            b.setCheckable(True); b.setMinimumHeight(24)
+        self.btn_active_p1.setChecked(True)
+        self._active_group = QButtonGroup(self)
+        self._active_group.setExclusive(True)
+        self._active_group.addButton(self.btn_active_p1)
+        self._active_group.addButton(self.btn_active_p2)
+        abl.addStretch()
+        abl.addWidget(self.btn_active_p1)
+        abl.addWidget(self.btn_active_p2)
+        agl.addWidget(self.active_bar)
+
+        # Déverrouillage manuel des champs de limites
+        self.chk_unlock_fields = QCheckBox("Modifier les limites manuellement")
+        agl.addWidget(self.chk_unlock_fields)
+
+        ll.addWidget(apply_group)
+
         # ── Pipe 1 ────────────────────────────────────────────────────────────
-        g1 = QGroupBox("Pipe 1  —  zone rouge")
+        g1 = QGroupBox("Second plan : zone rouge (pipe 1)")
         g1l = QGridLayout(g1); g1l.setSpacing(6)
         g1l.addWidget(_lbl("Limite haute  (Y px)"), 0, 0)
         self.p1_top = _int_field(500);    g1l.addWidget(self.p1_top, 0, 1)
@@ -605,7 +865,7 @@ class MainWindow(QMainWindow):
         ll.addWidget(g1)
 
         # ── Pipe 2 ────────────────────────────────────────────────────────────
-        g2 = QGroupBox("Pipe 2  —  zone bleue")
+        g2 = QGroupBox("Premier plan : zone bleue (pipe 2)")
         g2l = QGridLayout(g2); g2l.setSpacing(6)
         g2l.addWidget(_lbl("Limite haute  (Y px)"), 0, 0)
         self.p2_top = _int_field(800);    g2l.addWidget(self.p2_top, 0, 1)
@@ -618,20 +878,19 @@ class MainWindow(QMainWindow):
         g2l.addWidget(_lbl("Taille bloc   (px)"),   4, 0)
         self.p2_bs = _int_field(35);    g2l.addWidget(self.p2_bs, 4, 1)
 
-        # Info decimation (calculée automatiquement, affichage seul)
-        self.p2_dec_label = QLabel("décimation=— / downsize=—")
-        self.p2_dec_label.setStyleSheet("color: #2a5ad4; font-size: 9px;")
+        # Info decimation (calculée automatiquement, champ readonly comme les
+        # autres champs d'information) — spécifique au pipe 2 : lui seul
+        # décime (pipe 1 downsize sans décimation, downsize_ratio_pipe1
+        # découle directement de sa taille de bloc, sans recherche de
+        # combinaison).
+        self.p2_dec_label = QLineEdit("décimation=— / downsize=—")
+        self.p2_dec_label.setReadOnly(True)
         g2l.addWidget(self.p2_dec_label, 5, 0, 1, 2)
         ll.addWidget(g2)
 
         s2 = QFrame(); s2.setObjectName("sep"); ll.addWidget(s2)
 
-        # ── Boutons Tester / Envoyer ──────────────────────────────────────────
-        self.btn_try  = QPushButton("Tester la configuration")
-        self.btn_try.setObjectName("btn-try")
-        self.btn_try.setMinimumHeight(32)
-        ll.addWidget(self.btn_try)
-
+        # ── Bouton Envoyer ─────────────────────────────────────────────────────
         self.btn_send = QPushButton("Envoyer la configuration")
         self.btn_send.setObjectName("btn-send")
         self.btn_send.setMinimumHeight(34)
@@ -645,8 +904,12 @@ class MainWindow(QMainWindow):
         rl.setContentsMargins(0, 0, 0, 0)
         rl.setSpacing(8)
 
-        self.display = ImageDisplay()
-        rl.addWidget(self.display, stretch=1)
+        self.placeholder = make_placeholder_label()
+        self.crop_view   = InteractiveCropView()
+        self.display_stack = QStackedWidget()
+        self.display_stack.addWidget(self.placeholder)
+        self.display_stack.addWidget(self.crop_view)
+        rl.addWidget(self.display_stack, stretch=1)
 
         log_group = QGroupBox("Journal")
         lgl = QVBoxLayout(log_group)
@@ -684,6 +947,20 @@ class MainWindow(QMainWindow):
         if "RESTART OF THE CONFIG PROCEDURE" in text:
             self._on_config_warmup()
 
+    def _reset_display(self):
+        """Repart sur le placeholder (aucune image) et reverrouille les 8
+        champs de limites — nouvelle session de capture, la position figée
+        par une application précédente n'a plus de sens tant qu'on n'a pas
+        réappliqué sur la nouvelle image."""
+        self.display_stack.setCurrentWidget(self.placeholder)
+        self.btn_apply.setText("Appliquer la config")
+        self.crop_view.clear_rects()
+        self._last_image = None
+        self.chk_unlock_fields.setChecked(False)
+        for f in (self.p1_top, self.p1_bot, self.p1_left, self.p1_right,
+                  self.p2_top, self.p2_bot, self.p2_left, self.p2_right):
+            f.setReadOnly(True)
+
     def _on_ready(self):
         """Reçu à chaque fois que le µC entre en attente de capture ('wait for
         send yuv frame') : on repart d'un flux propre et on (ré)active
@@ -695,8 +972,7 @@ class MainWindow(QMainWindow):
         self._captured = False
         self._tested   = False
         self._sent     = False
-        self.display.clear_image()
-        self._last_image = None
+        self._reset_display()
         self._update_buttons()
 
     def _on_config_warmup(self):
@@ -708,8 +984,7 @@ class MainWindow(QMainWindow):
         self._captured = False
         self._tested   = False
         self._sent     = False
-        self.display.clear_image()
-        self._last_image = None
+        self._reset_display()
         self._update_buttons()
 
     # ── Horloge date/heure ─────────────────────────────────────────────────────
@@ -739,9 +1014,16 @@ class MainWindow(QMainWindow):
 
     def _connect_signals(self):
         self.btn_capture.clicked.connect(self._do_capture)
-        self.btn_try.clicked.connect(self._do_try)
+        self.btn_apply.clicked.connect(self._do_apply_toggle)
         self.btn_send.clicked.connect(self._do_send)
         self.p2_bs.textChanged.connect(self._update_dec_label)
+        self.btn_active_p1.clicked.connect(lambda: self._set_active_pipe('p1'))
+        self.btn_active_p2.clicked.connect(lambda: self._set_active_pipe('p2'))
+        self.chk_unlock_fields.toggled.connect(self._on_unlock_toggled)
+        for f in (self.p1_top, self.p1_bot, self.p1_left, self.p1_right):
+            f.textChanged.connect(lambda _, k='p1': self._sync_rect_from_fields(k))
+        for f in (self.p2_top, self.p2_bot, self.p2_left, self.p2_right):
+            f.textChanged.connect(lambda _, k='p2': self._sync_rect_from_fields(k))
 
     # ── Connexion automatique (polling VID 0x0483) ────────────────────────────
 
@@ -765,8 +1047,7 @@ class MainWindow(QMainWindow):
                 self._captured = False
                 self._tested   = False
                 self._sent     = False
-                self.display.clear_image()
-                self._last_image = None
+                self._reset_display()
                 self._update_buttons()
                 self._start_worker()
         else:
@@ -785,18 +1066,20 @@ class MainWindow(QMainWindow):
         try:
             bs = int(self.p2_bs.text())
         except ValueError:
+            self.p2_dec_label.setStyleSheet("")
             self.p2_dec_label.setText("décimation=— / downsize=—")
             return
         if bs <= 0:
+            self.p2_dec_label.setStyleSheet("")
             self.p2_dec_label.setText("décimation=— / downsize=—")
             return
         dec, ds = compute_pipe2_params(bs)
         if dec is None:
             self.p2_dec_label.setText("⚠ taille de bloc invalide pour ce pipe")
-            self.p2_dec_label.setStyleSheet("color: #d43a3a; font-size: 9px;")
+            self.p2_dec_label.setStyleSheet("color: #d43a3a;")
         else:
             self.p2_dec_label.setText(f"décimation={dec}  downsize={ds:.4f}")
-            self.p2_dec_label.setStyleSheet("color: #2a5ad4; font-size: 9px;")
+            self.p2_dec_label.setStyleSheet("")
 
     # ── Capture ───────────────────────────────────────────────────────────────
 
@@ -808,34 +1091,99 @@ class MainWindow(QMainWindow):
     def _on_image_received(self, img_np, desc):
         self._last_image = img_np
         self._captured = True
-        self._tested   = False        # nouvelle capture => il faut re-tester
-        size = (self.display.width(), self.display.height())
-        pix = make_raw_pixmap(img_np, size)
-        self.display.set_pixmap(pix)
+        self._tested   = False        # nouvelle capture => il faut réappliquer
+        self.btn_apply.setText("Appliquer la config")
+        self.crop_view.clear_rects()
+        self.crop_view.set_image(img_np)
+        self.display_stack.setCurrentWidget(self.crop_view)
         self._busy = False
         self._update_buttons()
 
-    # ── Tester la config (local) ──────────────────────────────────────────────
+    # ── Appliquer / retirer la config (local) ─────────────────────────────────
 
-    def _do_try(self):
-        cfg = self._read_config()
-        if cfg is None: return
-        size = (self.display.width(), self.display.height())
-        pix = make_preview_pixmap(
-            self._last_image,
-            cfg['crop_v_start_pipe1'],
-            cfg['crop_v_start_pipe1'] + cfg['crop_v_size_pipe1'],
-            cfg['crop_h_start_pipe1'],
-            cfg['crop_h_start_pipe1'] + cfg['crop_h_size_pipe1'],
-            cfg['crop_v_start_pipe2'],
-            cfg['crop_v_start_pipe2'] + cfg['crop_v_size_pipe2'],
-            cfg['crop_h_start_pipe2'],
-            cfg['crop_h_start_pipe2'] + cfg['crop_h_size_pipe2'],
-            size
-        )
-        self.display.set_pixmap(pix)
-        self._tested = True           # débloque « Envoyer »
+    def _on_pipe1_rect_changed(self, top, bottom, left, right):
+        self.p1_top.setText(str(top));   self.p1_bot.setText(str(bottom))
+        self.p1_left.setText(str(left)); self.p1_right.setText(str(right))
+
+    def _on_pipe2_rect_changed(self, top, bottom, left, right):
+        self.p2_top.setText(str(top));   self.p2_bot.setText(str(bottom))
+        self.p2_left.setText(str(left)); self.p2_right.setText(str(right))
+
+    def _sync_rect_from_fields(self, key):
+        """Répercute en direct une saisie manuelle (champs déverrouillés)
+        sur le rectangle correspondant, sans attendre un « Retirer » suivi
+        d'un « Appliquer » -- silencieusement ignoré si les 4 valeurs ne
+        forment pas encore un rectangle valide (en cours de frappe). Aussi
+        déclenché (sans effet, values déjà identiques) par les setText() du
+        glisser-déposer lui-même — inoffensif, pas de boucle puisque
+        set_rect() ne réémet pas on_change."""
+        if not self._tested:
+            return
+        if key == 'p1':
+            fields = (self.p1_top, self.p1_bot, self.p1_left, self.p1_right)
+            color, callback = '#d43a3a', self._on_pipe1_rect_changed
+        else:
+            fields = (self.p2_top, self.p2_bot, self.p2_left, self.p2_right)
+            color, callback = '#2a5ad4', self._on_pipe2_rect_changed
+        try:
+            top, bottom, left, right = (int(f.text()) for f in fields)
+        except ValueError:
+            return
+        if bottom <= top or right <= left:
+            return
+        self.crop_view.set_rect(key, top, bottom, left, right, color, callback)
+
+    def _on_unlock_toggled(self, checked):
+        """La case « Modifier les limites manuellement » est la seule
+        autorité sur l'édition au clavier des 8 champs — indépendante de
+        l'application/retrait de la config ou du glisser-déposer (qui, lui,
+        continue de fonctionner même readonly puisqu'il écrit par code)."""
+        for f in (self.p1_top, self.p1_bot, self.p1_left, self.p1_right,
+                  self.p2_top, self.p2_bot, self.p2_left, self.p2_right):
+            f.setReadOnly(not checked)
+
+    def _do_apply_toggle(self):
+        """Ajoute/retire la surimpression interactive des zones pipe1/pipe2,
+        aux coordonnées actuellement dans les champs (toujours la base
+        utilisée) — ajustables directement à la souris (coins/côtés), comme
+        un rectangle Word. L'image et sa graduation restent affichées par
+        InteractiveCropView dans les deux cas (déjà en place depuis la
+        capture) : aucun changement de vue, donc aucune divergence de style
+        possible entre config appliquée et retirée."""
+        if not self._tested:
+            cfg = self._read_config()
+            if cfg is None: return
+
+            self.crop_view.set_rect(
+                'p1',
+                cfg['crop_v_start_pipe1'],
+                cfg['crop_v_start_pipe1'] + cfg['crop_v_size_pipe1'],
+                cfg['crop_h_start_pipe1'],
+                cfg['crop_h_start_pipe1'] + cfg['crop_h_size_pipe1'],
+                '#d43a3a', self._on_pipe1_rect_changed)
+            self.crop_view.set_rect(
+                'p2',
+                cfg['crop_v_start_pipe2'],
+                cfg['crop_v_start_pipe2'] + cfg['crop_v_size_pipe2'],
+                cfg['crop_h_start_pipe2'],
+                cfg['crop_h_start_pipe2'] + cfg['crop_h_size_pipe2'],
+                '#2a5ad4', self._on_pipe2_rect_changed)
+            self.crop_view.set_active_pipe(self._active_pipe)
+            self.btn_active_p1.setChecked(self._active_pipe == 'p1')
+            self.btn_active_p2.setChecked(self._active_pipe == 'p2')
+
+            self._tested = True             # débloque « Envoyer »
+            self.btn_apply.setText("Retirer la config")
+        else:
+            self.crop_view.clear_rects()
+            self._tested = False
+            self.btn_apply.setText("Appliquer la config")
+
         self._update_buttons()
+
+    def _set_active_pipe(self, key):
+        self._active_pipe = key
+        self.crop_view.set_active_pipe(key)
 
     # ── Envoyer la config ─────────────────────────────────────────────────────
 
@@ -856,7 +1204,9 @@ class MainWindow(QMainWindow):
         self._busy = True
         self._update_buttons()
         # L'image disparaît dès l'envoi de la config
-        self.display.clear_image()
+        self.display_stack.setCurrentWidget(self.placeholder)
+        self.btn_apply.setText("Appliquer la config")
+        self.crop_view.clear_rects()
         self._last_image = None
         self._worker.request_config(data)
 
@@ -865,7 +1215,8 @@ class MainWindow(QMainWindow):
         if success:
             # Config validée : l'image disparaît, les 3 boutons se figent
             self._sent = True
-            self.display.clear_image()
+            self.display_stack.setCurrentWidget(self.placeholder)
+            self.crop_view.clear_rects()
             self._last_image = None
         self._busy = False
         self._update_buttons()
@@ -873,22 +1224,27 @@ class MainWindow(QMainWindow):
     # ── Helpers ───────────────────────────────────────────────────────────────
 
     def _update_buttons(self):
-        """Applique les règles d'enchaînement Capturer → Tester → Envoyer."""
+        """Applique les règles d'enchaînement Capturer → Appliquer → Envoyer."""
         connected = self._auto_port is not None
 
         if self._sent or self._busy:
             # Session terminée ou opération en cours : tout est figé
             self.btn_capture.setEnabled(False)
-            self.btn_try.setEnabled(False)
+            self.btn_apply.setEnabled(False)
             self.btn_send.setEnabled(False)
+            self.btn_active_p1.setEnabled(False)
+            self.btn_active_p2.setEnabled(False)
             return
 
         # Capturer : seulement quand le µC a signalé "wait for send yuv frame"
         self.btn_capture.setEnabled(connected and self._ready)
-        # Tester : seulement après une capture
-        self.btn_try.setEnabled(connected and self._captured)
-        # Envoyer : seulement après une capture ET un test
+        # Appliquer/retirer : seulement après une capture
+        self.btn_apply.setEnabled(connected and self._captured)
+        # Envoyer : seulement après une capture ET une application
         self.btn_send.setEnabled(connected and self._captured and self._tested)
+        # Zone active (pipe1/pipe2) : n'a de sens que si la config est appliquée
+        self.btn_active_p1.setEnabled(self._tested)
+        self.btn_active_p2.setEnabled(self._tested)
 
     def _read_config(self):
         def to_int(field, name):

@@ -83,6 +83,7 @@ volatile int frame_ready = 0;
 volatile int warmup_frames = 0;
 volatile int warmup_done = 0;
 volatile int uart_busy = 0; //1 = UART used for binary data, printf muted
+volatile int restart_requested = 0; //set by BSP_PB_Callback (ISR), consumed below
 
 /* H264 recording state (shared with app_record.c / app_callbacks.c) */
 volatile int h264_streaming = 0;
@@ -147,7 +148,6 @@ int SD_init(void)
 	switch(rec_ready)
 	{
 	case 0:
-		printf("[uSD] external memory init successful\r\n");
 		break;
 	case -1:
 		printf("[uSD] required formatting failed (FAT32)\r\n");
@@ -201,6 +201,12 @@ void app_run(void)
 		LED_mode();
 		#endif
 
+		if (restart_requested) {
+			restart_requested = 0;
+			state = CONFIG_MODE_WARMUP;
+			printf("[FSM] RESTART OF THE CONFIG PROCEDURE...\r\n");
+		}
+
 		switch(state)
 		{
 		case CONFIG_MODE_WARMUP:
@@ -219,7 +225,8 @@ void app_run(void)
 
 			if (cmd == 'S'){
 				int jpeg_len = capture_yuv();
-				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
+				printf("[FSM] frame captured: %d KB\r\n",
+						jpeg_len / 1024);
 				HAL_Delay(50);
 				send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
 			}
@@ -265,13 +272,14 @@ void app_run(void)
 		case SD_CARD:
 			if(!sd_initialized && SD_init()){
 				sd_initialized = 1;
+				printf("[FSM] start movement detection... (TAMP button)\r\n");
 				state = OP_WINDOW_CHECK;
 				break;
 			}
 
 			if(sd_initialized){
 				if(BSP_SD_GetCardState(0) != SD_TRANSFER_OK){
-					printf("[uSD] uSD has been disconnected, config procedure restart...\r\n");
+					printf("[uSD] uSD has been disconnected, SD re-init...\r\n");
 					sd_initialized = 0;
 				}
 				else{
@@ -285,12 +293,15 @@ void app_run(void)
 
 		case OP_WINDOW_CHECK:
 			//TODO: check operation window (24h/diurne)
-
-			printf("[FSM] start movement detection... (TAMP button)\r\n");
 			state = MOVEMENT_DETECTION;
 			break;
 
 		case MOVEMENT_DETECTION:
+			uint32_t t0 = HAL_GetTick();
+			int ret = capture_detect_frame();
+			printf("[FSM] detect test capture: %s (%lu ms)\r\n",
+					ret == 0 ? "ok" : "TIMEOUT", (unsigned long)(HAL_GetTick() - t0));
+
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
 				printf("[FSM] movement detected!\r\n");
 				actual_ticks = HAL_GetTick();

@@ -8,9 +8,12 @@
 #include "app_shared.h"
 
 #include <math.h>
+#include "app_cam.h"
 #include "cmw_camera.h"
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_hal_dcmipp.h"
+#include "FreeRTOS.h"
+#include "task.h"
 
 /* Post-processing configuration + detect-mode capture buffers (module-private) */
 static DCMIPP_CropConfTypeDef       crop_conf = { 0 };
@@ -105,5 +108,34 @@ void dcmipp_apply_detect_config(void)
   size_pipe2 = SENSOR_WIDTH * downsize_conf_pipe2.VSize;
   buffer_pipe1_capture = (uint8_t *)axisram_alloc(size_pipe1);
   buffer_pipe2_capture = (uint8_t *)axisram_alloc(size_pipe2);
+}
+
+/* One snapshot on pipe1+pipe2 with the crop/decimation/downsize config
+ * already applied above -- DCMIPP is NOT touched here.  Used from
+ * MOVEMENT_DETECTION to check whether the sensor/DCMIPP still capture
+ * correctly right after waking up from the SLEEP window (sleep_short_period
+ * switches to MSI@4MHz and turns the PLLs off -- see app_sleep.c). */
+int capture_detect_frame(void)
+{
+  uint32_t start;
+
+  snapshot_in_progress = 1;
+  frame_ready = 0;
+  CAM_CapturePipe_Start(buffer_pipe1_capture, buffer_pipe2_capture, CMW_MODE_SNAPSHOT, 1);
+
+  start = HAL_GetTick();
+  while (!frame_ready) {
+    if (HAL_GetTick() - start > 1000) {
+      snapshot_in_progress = 0;
+      return -1;
+    }
+    vTaskDelay(pdMS_TO_TICKS(1));
+  }
+  snapshot_in_progress = 0;
+
+  SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_pipe1_capture, CACHE_ALIGN_SIZE(size_pipe1));
+  SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_pipe2_capture, CACHE_ALIGN_SIZE(size_pipe2));
+
+  return 0;
 }
 
