@@ -271,38 +271,8 @@ void app_run(void)
 			break;
 
 		case SD_CARD:
-			CAM_Deinit();
-			while (1) {
-								sleep_short_period(2000);
-							}
 			if(!sd_initialized && SD_init()){
 				sd_initialized = 1;
-
-#if SD_LOW_POWER_TEST
-				/* Isolated test: no camera/detection activity below, so the SD's
-				 * own current shows up cleanly instead of being buried under the
-				 * ~200 mA MOVEMENT_DETECTION load (see app_shared.h).
-				 * DETECT_MODE_WARMUP (just before this state) left the camera
-				 * running in CMW_MODE_CONTINUOUS (camera_warmup() -> app_capture.c)
-				 * -- free-running, unattended, likely pulling MORE current than
-				 * the paced MOVEMENT_DETECTION loop. Must be stopped, otherwise
-				 * it swamps the SD signal just as badly, only worse. */
-				CAM_Deinit();
-#if SD_LOW_POWER_TEST == 2
-				REC_SleepSD();
-				printf("[PWR TEST] SD asleep (SDMMC2 clock gated) -- measure current now\r\n");
-#elif SD_LOW_POWER_TEST == 3
-				REC_PowerDownSD();
-				printf("[PWR TEST] SD powered down -- measure current now\r\n");
-#else
-				printf("[PWR TEST] SD left active/awake -- measure current now\r\n");
-#endif
-				while (1) {
-					sleep_short_period(2000);
-				}
-#endif
-
-				REC_SleepSD(); /* gate SDMMC2 clock; woken on demand in RECORD_MODE_INIT */
 
 				printf("[FSM] start movement detection... (TAMP button)\r\n");
 				state = OP_WINDOW_CHECK;
@@ -342,7 +312,7 @@ void app_run(void)
 			}
 			sleep_short_period(1000);
 
-//			state = SD_CARD;
+			state = SD_CARD;
 			break;
 
 		case RECORD_MODE_INIT:

@@ -62,6 +62,7 @@ static void Security_Config();
 static void IAC_Config();
 static void CONSOLE_Config(void);
 static void RTC_Config(void);
+static void CN11_Inputs_Config(void);
 static void Setup_Mpu(void);
 static int main_freertos(void);
 static void main_thread_fct(void *arg);
@@ -299,6 +300,24 @@ static void CONSOLE_Config()
   }
 }
 
+static void CN11_Inputs_Config(void)
+{
+  GPIO_InitTypeDef gpio_init = {0};
+
+  __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOH_CLK_ENABLE();
+
+  gpio_init.Mode  = GPIO_MODE_INPUT;
+  gpio_init.Pull  = GPIO_PULLUP;
+  gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
+
+  gpio_init.Pin = GPIO_PIN_0; /* PD0 -- CN11 D2 -- mode diurne*/
+  HAL_GPIO_Init(GPIOD, &gpio_init);
+
+  gpio_init.Pin = GPIO_PIN_5; /* PH5 -- CN11 D4 -- mode 24h*/
+  HAL_GPIO_Init(GPIOH, &gpio_init);
+}
+
 /* ==========================================================================
  * RTC (timestamped file names, clocked on the internal LSI)
  * ========================================================================== */
@@ -412,6 +431,8 @@ static void main_thread_fct(void *arg)
 
   ret = BSP_PB_Init(BUTTON_USER1, BUTTON_MODE_EXTI);
   assert(ret == BSP_ERROR_NONE);
+
+  CN11_Inputs_Config();
 
   /* Set all required IPs as secure privileged */
   Security_Config();
