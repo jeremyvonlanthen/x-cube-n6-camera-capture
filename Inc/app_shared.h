@@ -26,6 +26,22 @@
  * 1: debugging mode: play with `Debug` but assume extra consumption current */
 #define DEBUG_MODE 0
 
+/* SD_LOW_POWER_TEST
+ * Isolated one-shot SD power-state test: initializes the SD card once
+ * (SD_CARD state), puts it in the selected state below, then parks in
+ * low-power SLEEP forever -- no camera/DCMIPP/detection activity at all, so
+ * the SD's own contribution to board current (a couple mA at most) isn't
+ * buried under the ~200 mA MOVEMENT_DETECTION load. The FSM never proceeds
+ * past SD_CARD. Flash, disconnect ST-Link USB (see DEBUG_MODE above), and
+ * measure board current; repeat for each value to compare:
+ *   0: normal operation (test disabled)
+ *   1: SD left active/awake (baseline)
+ *   2: SD asleep  -- REC_SleepSD(): SDMMC2 clock gated only, card selected
+ *   3: SD powered down -- REC_PowerDownSD(): clock + GPIOC/E off, unmounted
+ * For a 4th "card physically removed" data point, pull the microSD card
+ * while parked in mode 1 or 2 (nothing in this test reacts to it). */
+#define SD_LOW_POWER_TEST 3
+
 /* LPTIM1 wake-up timer clock frequency, in Hz, used to convert a requested
  * sleep duration (ms) into an auto-reload tick count. The LSI is an
  * uncalibrated RC oscillator: its datasheet-nominal ~32kHz can be off by

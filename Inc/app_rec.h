@@ -19,6 +19,23 @@
  * the SD writer task.  Returns 0 on success. */
 int REC_Init(void);
 
+/* Unmounts the FAT32 volume and powers down the SD peripheral (HAL SD
+ * de-init, SDMMC2 clock, GPIOC/E pins) for current-consumption measurement.
+ * VDDIO5 is deliberately left enabled -- it is a shared board I/O supply
+ * (also used by the console UART pins), not an SD-only rail; see
+ * SD_MspDeInit() in stm32n6570_discovery_sd.c. REC_Init() must be called
+ * again before any further SD access. */
+void REC_PowerDownSD(void);
+
+/* Lighter alternative to REC_PowerDownSD(): gates only the SDMMC2 bus clock,
+ * which free-runs continuously (up to 50 MHz) whenever the card is
+ * initialized -- the dominant contributor to "SD active" current. The card
+ * stays selected and the FAT32 volume stays mounted, so REC_WakeSD() resumes
+ * instantly (no BSP_SD_Init/f_mount, no card re-identification). Call
+ * REC_WakeSD() before any SD read/write, and REC_SleepSD() again once done. */
+void REC_SleepSD(void);
+void REC_WakeSD(void);
+
 /* Opens a new VID_xxxx.MP4 on the card and starts the muxer.
  * ring_buf/ring_size: caller-provided PSRAM area used to buffer encoded
  * frames between the encoder task and the SD writer task (absorbs SD

@@ -38,6 +38,7 @@
 #include "app_rtc.h"
 #include "app_uart.h"
 #include "app_capture.h"
+#include "app_cam.h"
 #include "app_pipes.h"
 #include "app_record.h"
 #include "app_callbacks.h"
@@ -270,16 +271,47 @@ void app_run(void)
 			break;
 
 		case SD_CARD:
+			CAM_Deinit();
+			while (1) {
+								sleep_short_period(2000);
+							}
 			if(!sd_initialized && SD_init()){
 				sd_initialized = 1;
+
+#if SD_LOW_POWER_TEST
+				/* Isolated test: no camera/detection activity below, so the SD's
+				 * own current shows up cleanly instead of being buried under the
+				 * ~200 mA MOVEMENT_DETECTION load (see app_shared.h).
+				 * DETECT_MODE_WARMUP (just before this state) left the camera
+				 * running in CMW_MODE_CONTINUOUS (camera_warmup() -> app_capture.c)
+				 * -- free-running, unattended, likely pulling MORE current than
+				 * the paced MOVEMENT_DETECTION loop. Must be stopped, otherwise
+				 * it swamps the SD signal just as badly, only worse. */
+				CAM_Deinit();
+#if SD_LOW_POWER_TEST == 2
+				REC_SleepSD();
+				printf("[PWR TEST] SD asleep (SDMMC2 clock gated) -- measure current now\r\n");
+#elif SD_LOW_POWER_TEST == 3
+				REC_PowerDownSD();
+				printf("[PWR TEST] SD powered down -- measure current now\r\n");
+#else
+				printf("[PWR TEST] SD left active/awake -- measure current now\r\n");
+#endif
+				while (1) {
+					sleep_short_period(2000);
+				}
+#endif
+
+				REC_SleepSD(); /* gate SDMMC2 clock; woken on demand in RECORD_MODE_INIT */
+
 				printf("[FSM] start movement detection... (TAMP button)\r\n");
 				state = OP_WINDOW_CHECK;
 				break;
 			}
 
 			if(sd_initialized){
-				if(BSP_SD_GetCardState(0) != SD_TRANSFER_OK){
-					printf("[uSD] uSD has been disconnected, SD re-init...\r\n");
+				if(BSP_SD_IsDetected(0) != SD_PRESENT){
+					printf("[uSD] uSD has been removed, SD re-init...\r\n");
 					sd_initialized = 0;
 				}
 				else{
@@ -310,10 +342,11 @@ void app_run(void)
 			}
 			sleep_short_period(1000);
 
-			state = SD_CARD;
+//			state = SD_CARD;
 			break;
 
 		case RECORD_MODE_INIT:
+			REC_WakeSD(); /* restore SDMMC2 clock before touching the card */
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
 			record_jpeg_sd(timestamp, rec_files_height);
 			record_camera_setup(rec_files_height);
@@ -323,6 +356,7 @@ void app_run(void)
 
 		case VIDEO_RECORDING:
 			record_h264_run(timestamp, rec_files_height, 8);
+			REC_SleepSD(); /* done writing: gate the clock again until next recording */
 
 			state = DETECT_MODE_WARMUP;
 			break;

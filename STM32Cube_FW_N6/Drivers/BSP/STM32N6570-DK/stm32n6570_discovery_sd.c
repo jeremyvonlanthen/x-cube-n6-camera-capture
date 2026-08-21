@@ -287,9 +287,15 @@ int32_t BSP_SD_DeInit(uint32_t Instance)
   }
   else
   {
-    if (HAL_EXTI_ClearConfigLine(&hsd_exti[Instance]) != HAL_OK)
+    /* The detect-pin EXTI line is only configured if the app called
+     * BSP_SD_DetectITConfig(), which this project never does (card presence
+     * is polled instead) -- hsd_exti[Instance] is then still zero-initialized
+     * (Line == 0). Calling HAL_EXTI_ClearConfigLine() on that asserts inside
+     * the HAL (IS_EXTI_LINE(0) is false) and traps in assert_failed(), so it
+     * must only be called once a real line has been registered. */
+    if (hsd_exti[Instance].Line != 0U)
     {
-      return BSP_ERROR_PERIPH_FAILURE;
+      (void)HAL_EXTI_ClearConfigLine(&hsd_exti[Instance]);
     }
 
     /* Configure Detect pins in input floating mode */
@@ -939,12 +945,21 @@ static void SD_MspDeInit(SD_HandleTypeDef *hsd)
     gpio_init_structure.Pin = GPIO_PIN_0 | GPIO_PIN_2 | GPIO_PIN_3 | GPIO_PIN_4  | GPIO_PIN_5 ;
     HAL_GPIO_DeInit(GPIOC, gpio_init_structure.Pin);
 
-    /* GPIOD configuration */
+    /* GPIOE configuration (D3) -- matches SD_MspInit(), which drives D3 on
+     * GPIOE.4, not GPIOD.4 */
     gpio_init_structure.Pin = GPIO_PIN_4;
-    HAL_GPIO_DeInit(GPIOD, gpio_init_structure.Pin);
+    HAL_GPIO_DeInit(GPIOE, gpio_init_structure.Pin);
 
-    /* Disable SDMMC1 clock */
-    __HAL_RCC_SDMMC1_CLK_DISABLE();
+    /* Disable SDMMC2 clock -- SD_MspInit() enables SDMMC2, not SDMMC1 */
+    __HAL_RCC_SDMMC2_CLK_DISABLE();
+
+    /* Do NOT call HAL_PWREx_DisableVddIO5() here: on this board VDDIO5 is not
+     * an SD-only supply. The FSBL sets PWR_SVMCR2_VDDIO5SV unconditionally at
+     * boot for the I/O compensation-cell errata (ES0620, see
+     * system_stm32n6xx_fsbl.c), and GPIOE -- which carries the SD D3 line --
+     * also carries the USART1 console pins (PE5/PE6, see CONSOLE_Config() in
+     * main.c). Disabling VDDIO5 silently kills the console UART along with
+     * the SD pins (found the hard way: printf output just stops, no crash). */
   }
 }
 
