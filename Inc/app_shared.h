@@ -71,13 +71,22 @@ typedef enum
   CONFIG_MODE_WARMUP,
   SEND_YUV_FRAME,
   RECEIVE_PIPES_CONFIG,
+  SAVE_PIPES_CONFIG,
+  SD_CARD_INIT,
   DETECT_MODE_WARMUP,
-  SD_CARD,
   OP_WINDOW_CHECK,
   MOVEMENT_DETECTION,
   RECORD_MODE_INIT,
-  VIDEO_RECORDING
+  VIDEO_RECORDING,
+  MULTIMEDIA_STORAGE
 } state_t;
+
+typedef enum
+{
+	_CONFIG,
+	_DIURNE,
+	_24H
+} mode_t;
 
 /* --- Handles communs (definis ailleurs) --- */
 extern UART_HandleTypeDef huart1;              /* main.c */
@@ -100,7 +109,6 @@ extern volatile int frame_ready;
 extern volatile int warmup_frames;
 extern volatile int warmup_done;
 extern volatile int uart_busy;
-extern volatile int restart_requested;  /* set by BSP_PB_Callback (ISR), consumed by app_run() */
 
 extern volatile int h264_streaming;
 extern volatile int h264_frame_ready;

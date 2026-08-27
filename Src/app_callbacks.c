@@ -47,10 +47,10 @@ int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
 
 void BSP_PB_Callback(Button_TypeDef Button)
 {
-  if(Button == BUTTON_USER1){
-  	if(state <= MOVEMENT_DETECTION){
-  		restart_requested = 1;
-  	}
-  }
+//  if(Button == BUTTON_USER1){
+//  	if(state <= MOVEMENT_DETECTION){
+//  		restart_requested = 1;
+//  	}
+//  }
 }
 

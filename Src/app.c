@@ -66,6 +66,7 @@ Config_t config_py = { 0 };
 
 /* DIAS state machine */
 state_t state = CONFIG_MODE_WARMUP;
+mode_t mode = _CONFIG;
 
 /* Capture buffers (PSRAM) */
 uint8_t buffer_full_frame[MAX_CAPTURE_FRAME_SIZE] ALIGN_32 IN_PSRAM;
@@ -78,13 +79,13 @@ uint8_t *buffer_warmup = NULL;
 JPG_conf_t jpg_conf = { 0 };
 
 /* Capture/mode flags */
-volatile int sd_initialized = 0;
+volatile int sd_reinit_for_storage = 0;
 volatile int snapshot_in_progress = 0;
 volatile int frame_ready = 0;
 volatile int warmup_frames = 0;
 volatile int warmup_done = 0;
 volatile int uart_busy = 0; //1 = UART used for binary data, printf muted
-volatile int restart_requested = 0; //set by BSP_PB_Callback (ISR), consumed below
+volatile int config_already_saved = 0;
 
 /* H264 recording state (shared with app_record.c / app_callbacks.c) */
 volatile int h264_streaming = 0;
@@ -196,48 +197,57 @@ void app_run(void)
 	char timestamp[20];
 	int rec_files_height = 1080; // 480, 720, 960, 1080 (max)
 
+	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
+		printf("[FSM] RUNS NOW IN DIURNE MODE (until system restart)\r\n");
+		mode = _DIURNE;
+		state = SD_CARD_INIT;
+	}
+	else if(HAL_GPIO_ReadPin(GPIOH, GPIO_PIN_5) == GPIO_PIN_RESET){
+		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
+		mode = _24H;
+		state = SD_CARD_INIT;
+	}
+	else
+		printf("[FSM] RUNS NOW IN CONFIG MODE (until system restart)\r\n");
+
 	while(1)
 	{
 		#if DEBUG_MODE
 		LED_mode();
 		#endif
 
-		if (restart_requested) {
-			restart_requested = 0;
-			state = CONFIG_MODE_WARMUP;
-			printf("[FSM] RESTART OF THE CONFIG PROCEDURE...\r\n");
-		}
-
 		switch(state)
 		{
 		case CONFIG_MODE_WARMUP:
-			printf("[FSM] config mode warmup... (%d frames @ %d fps)\r\n",
-					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
+			printf("[FSM] config-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
-			printf("[FSM] config warmup ended\r\n");
 
-			state = SEND_YUV_FRAME;
 			printf("[FSM] wait for send yuv frame... (capturer une image)\r\n");
+			state = SEND_YUV_FRAME;
 			break;
 
 		case SEND_YUV_FRAME:
 			uint8_t cmd = 0;
 			HAL_UART_Receive(&huart1, &cmd, 1, 100);
 
-			if (cmd == 'S'){
+			switch(cmd)
+			{
+			case 'S':
 				int jpeg_len = capture_yuv();
-				printf("[FSM] frame captured: %d KB\r\n",
-						jpeg_len / 1024);
+				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
 				HAL_Delay(50);
 				send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
-			}
-			else if (cmd == 'T'){
+				break;
+
+			case 'T':
 				uint8_t dt[6] = { 0 };
 				if (HAL_UART_Receive(&huart1, dt, sizeof(dt), 1000) == HAL_OK)
 					rtc_set_datetime(dt);
-			}
-			else if(cmd == 'V'){
+				break;
+
+			case 'V':
 				state = RECEIVE_PIPES_CONFIG;
+				break;
 			}
 			break;
 
@@ -247,62 +257,72 @@ void app_run(void)
 
 			HAL_UART_Receive(&huart1, buffer, sizeof(Config_t), 100);
 			memcpy(&config_py, buffer, sizeof(Config_t));
+
 			if (config_py.magic == CONFIG_MAGIC){
-				printf("[FSM] pipes config successfully received\r\n");
 				answer = 'V';
+				printf("[FSM] pipes config successfully received\r\n");
 				HAL_UART_Transmit(&huart1, &answer, 1, 100);
 
-				state = DETECT_MODE_WARMUP;
+				state = SAVE_PIPES_CONFIG;
 				break;
 			}
 			HAL_UART_Transmit(&huart1, &answer, 1, 100);
 			break;
 
-		case DETECT_MODE_WARMUP:
-			printf("[FSM] detection mode warmup... (%d frames @ %d fps)\r\n",
-					WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
-			printf("[FSM] detection warmup ended\r\n");
+		case SAVE_PIPES_CONFIG:
+			if(config_already_saved) break;
 
-			printf("[FSM] pipes configuration procedure\r\n");
-			dcmipp_apply_detect_config();
-
-			state = SD_CARD;
+			//sauver la configuration dans la flash pour pouvoir y réaccéder après une extinction du STM
+			//déclarer une adresse fixe pour pouvoir accéder à la config sauvée
+			printf("[FSM] pipes config saved\n\r");
+			config_already_saved = 1;
 			break;
 
-		case SD_CARD:
-			if(!sd_initialized && SD_init()){
-				sd_initialized = 1;
-
-				printf("[FSM] start movement detection... (TAMP button)\r\n");
-				state = OP_WINDOW_CHECK;
-				break;
-			}
-
-			if(sd_initialized){
-				if(BSP_SD_IsDetected(0) != SD_PRESENT){
-					printf("[uSD] uSD has been removed, SD re-init...\r\n");
-					sd_initialized = 0;
-				}
-				else{
-					state = OP_WINDOW_CHECK;
+		case SD_CARD_INIT:
+			if(SD_init()){
+				if(sd_reinit_for_storage){
+					sd_reinit_for_storage = 0;
+					state = MULTIMEDIA_STORAGE;
 					break;
 				}
-			}
 
+				REC_PowerDownSD();
+				state = DETECT_MODE_WARMUP;
+				break;
+			}
 			sleep_short_period(2000);
 			break;
 
+		case DETECT_MODE_WARMUP:
+			printf("[FSM] detection-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
+			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
+
+			printf("[FSM] pipes configuration procedure\r\n");
+			dcmipp_apply_detect_config(); //utiliser ici la config précédemment sauvée dans la flash
+
+			state = OP_WINDOW_CHECK;
+			break;
+
 		case OP_WINDOW_CHECK:
-			//TODO: check operation window (24h/diurne)
-			state = MOVEMENT_DETECTION;
+			if(mode == _24H){
+				state = MOVEMENT_DETECTION;
+				break;
+			}
+
+			//à l'avenir, contrôle de la RTC/ALS
+			//si nuit: standby/système OFF
+			//si jour: state = MOVEMENT_DETECTION
+			uint8_t day_window = 1;
+			printf("[FSM] check diurne operating window: %s\r\n", day_window ? "DAY" : "NIGHT");
+
+			if(day_window)
+				state = MOVEMENT_DETECTION;
+			else{} //standby/système OFF
 			break;
 
 		case MOVEMENT_DETECTION:
-			uint32_t t0 = HAL_GetTick();
-			int ret = capture_detect_frame();
-			printf("[FSM] detect test capture: %s (%lu ms)\r\n",
-					ret == 0 ? "ok" : "TIMEOUT", (unsigned long)(HAL_GetTick() - t0));
+//			int ret = capture_detect_frame();
+			//ajouter ici le code de Léonard: capture d'image et algo détection sur les 2 pipes
 
 			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
 				printf("[FSM] movement detected!\r\n");
@@ -310,24 +330,38 @@ void app_run(void)
 				state = RECORD_MODE_INIT;
 				break;
 			}
-			sleep_short_period(1000);
 
-			state = SD_CARD;
+			//check of mecanical insertion of SD card
+			if(BSP_SD_IsDetected(0) != SD_PRESENT){
+				printf("[uSD] uSD has been removed, SD re-init...\r\n");
+				state = SD_CARD_INIT;
+				break;
+			}
+
+			sleep_short_period(1000);
+			state = OP_WINDOW_CHECK;
 			break;
 
 		case RECORD_MODE_INIT:
-			REC_WakeSD(); /* restore SDMMC2 clock before touching the card */
-			rtc_make_timestamp(timestamp, sizeof(timestamp));
-			record_jpeg_sd(timestamp, rec_files_height);
-			record_camera_setup(rec_files_height);
+//			rtc_make_timestamp(timestamp, sizeof(timestamp));
+//			record_jpeg_sd(timestamp, rec_files_height);
+//			record_camera_setup(rec_files_height);
 
 			state = VIDEO_RECORDING;
 			break;
 
 		case VIDEO_RECORDING:
-			record_h264_run(timestamp, rec_files_height, 8);
-			REC_SleepSD(); /* done writing: gate the clock again until next recording */
+			//ajouter à l'avenir un contrôle // de mouvement avec le pipe0
 
+//			record_h264_run(timestamp, rec_files_height, 8);
+
+			sd_reinit_for_storage = 1;
+			state = SD_CARD_INIT;
+			break;
+
+		case MULTIMEDIA_STORAGE:
+			//sauvegarde jpeg et mp4 dans la carte SD
+			REC_PowerDownSD();
 			state = DETECT_MODE_WARMUP;
 			break;
 

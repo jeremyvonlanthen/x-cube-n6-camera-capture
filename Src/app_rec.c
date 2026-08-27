@@ -117,6 +117,33 @@ static SemaphoreHandle_t sem_stopped;
 static StaticSemaphore_t sem_stopped_struct;
 
 /* ------------------------------------------------------------------------ */
+/* microSD Vcc load switch (U28 on the board schematic), driven by PQ7       */
+/* ------------------------------------------------------------------------ */
+#define SD_PWR_GPIO_PORT  GPIOQ
+#define SD_PWR_GPIO_PIN   GPIO_PIN_7
+
+/* Enables the SD card's own power supply (U28). Idempotent: safe to call on
+ * every REC_Init(), including the very first boot. Assumes an active-high
+ * enable (SET = powered) -- if REC_PowerDownSD() turns out not to reduce
+ * consumption once this is wired in, the polarity is inverted: swap SET/RESET
+ * below and in REC_PowerDownSD(). */
+static void SD_PowerRail_Init(void)
+{
+  GPIO_InitTypeDef gpio_init = {0};
+
+  __HAL_RCC_GPIOQ_CLK_ENABLE();
+
+  gpio_init.Pin   = SD_PWR_GPIO_PIN;
+  gpio_init.Mode  = GPIO_MODE_OUTPUT_PP;
+  gpio_init.Pull  = GPIO_NOPULL;
+  gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(SD_PWR_GPIO_PORT, &gpio_init);
+
+  HAL_GPIO_WritePin(SD_PWR_GPIO_PORT, SD_PWR_GPIO_PIN, GPIO_PIN_SET);
+  HAL_Delay(5); /* let U28's output ramp up before the card is addressed */
+}
+
+/* ------------------------------------------------------------------------ */
 /* Recorder state (owned by the SD writer task once started)                 */
 /* ------------------------------------------------------------------------ */
 static FATFS fs;
@@ -388,6 +415,8 @@ int REC_Init(void)
   FRESULT res;
   int ret;
 
+  SD_PowerRail_Init(); /* re-power the card if REC_PowerDownSD() cut it */
+
   /* SDMMC2 kernel clock: IC4 = PLL1 (800 MHz) / 4 = 200 MHz
    * (same 200 MHz kernel clock as the ST VENC_SDCard example). */
   clk.PeriphClockSelection = RCC_PERIPHCLK_SDMMC2;
@@ -449,6 +478,7 @@ void REC_PowerDownSD(void)
 {
   f_mount(NULL, "", 0);   /* unmount cleanly before pulling the rug */
   BSP_SD_DeInit(0);       /* HAL SD de-init + SDMMC2 clock/GPIO off */
+  HAL_GPIO_WritePin(SD_PWR_GPIO_PORT, SD_PWR_GPIO_PIN, GPIO_PIN_RESET); /* U28 off: card actually unpowered */
   printf("[uSD] SD powered down\r\n");
 }
 
