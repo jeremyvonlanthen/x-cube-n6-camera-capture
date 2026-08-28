@@ -29,6 +29,10 @@
  * derived (height * 4 / 3).  It must stay
  * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
  * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
+/* 15 fps @ 720p (not the H264_MAX_HEIGHT of 1080p): a 1440x1080/25fps clip
+ * measured ~15.7 Mbit/s on hardware, which didn't fit an 8-second clip in
+ * PSRAM (see H264_RAM_STORE_SIZE below). 960x720/15fps measures ~4.15 Mbit/s,
+ * comfortably fitting a full 15-second clip with margin to spare. */
 #define H264_FPS              25
 #define H264_VENC_OUT_SIZE    (1024 * 1024)  /* 1 MB: holds a full 1080p keyframe */
 #define H264_AE_WARMUP_FRAMES 10
@@ -262,8 +266,8 @@ void setup_record_h264(int height)
  * overlap without matching exactly -- undefined behavior. Two buffers keeps
  * this trivially safe.
  * ========================================================================== */
-#define H264_RAM_STORE_SIZE (8u * 1024u * 1024u) /* full rec_duration clip; ~200 frames for 8s @ 25fps 1080p */
-#define H264_RAM_MAX_FRAMES 512u                 /* generous vs ~200 frames for the case above */
+#define H264_RAM_STORE_SIZE (12u * 1024u * 1024u) /* 12MB */
+#define H264_RAM_MAX_FRAMES 4500u                  /* generous buffer for 120 secondes @ 25fps */
 
 typedef struct {
   uint32_t offset;
@@ -272,7 +276,12 @@ typedef struct {
 } h264_frame_desc_t;
 
 static uint8_t h264_ram_store[H264_RAM_STORE_SIZE] ALIGN_32 IN_PSRAM;
-static h264_frame_desc_t h264_ram_frames[H264_RAM_MAX_FRAMES];
+/* At 4500 entries (12 bytes each = ~53 KB) this no longer fits the default
+ * .bss region (AXISRAM2_P2_S, only 475 KB total, shared with everything
+ * else in the app). Place it in AXISRAM3456 instead (1792 KB, ~512 KB still
+ * free there) -- same pattern already used for axisram_pool (app.c) and
+ * ewl_heap_pool (app_enc.c). */
+static h264_frame_desc_t h264_ram_frames[H264_RAM_MAX_FRAMES] __attribute__((section(".axisram_bss")));
 static uint32_t h264_ram_frame_count;
 static uint32_t h264_ram_used;
 static int h264_ram_width, h264_ram_height;
@@ -358,9 +367,7 @@ int record_h264_to_ram(int height, int rec_duration)
    * SPS/PPS for the next file.
    * NOTE: H264EncRelease must NOT be called — it crashes on this target.
    *       H264EncStrmEnd is safe and is the correct way to close a stream. */
-  printf("[REC] ending encoder session...\r\n");
   ENC_EndSession(h264_venc_out, H264_VENC_OUT_SIZE);
-  printf("[REC] encoder session ended\r\n");
 
   /* Re-enter current mode from scratch */
   warmup_done = false;

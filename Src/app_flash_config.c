@@ -14,7 +14,6 @@
 #include "app_flash_config.h"
 
 #include <stdbool.h>
-#include <stdio.h>
 #include <string.h>
 
 #ifdef STM32N6570_DK_REV
@@ -43,18 +42,12 @@ static uint32_t config_flash_addr(void)
 
   if (!resolved) {
     BSP_XSPI_NOR_Info_t info = { 0 };
-    int32_t st = BSP_XSPI_NOR_GetInfo(FLASH_INSTANCE, &info);
 
-    if (st == BSP_ERROR_NONE && info.FlashSize > 0) {
+    /* Leave addr at 0 (its zero-init value) on failure -- callers treat
+     * "addr == 0" as "not resolved", never as a valid target (0 is also the
+     * very start of the flash, where the boot image lives). */
+    if (BSP_XSPI_NOR_GetInfo(FLASH_INSTANCE, &info) == BSP_ERROR_NONE && info.FlashSize > 0)
       addr = info.FlashSize - CONFIG_FLASH_SECTOR_SIZE;
-    } else {
-      /* Leave addr at 0 (its zero-init value) so the caller can tell this
-       * failed -- but 0 is also the very start of the flash (boot image),
-       * so callers must treat "addr == 0" as "not resolved", never as a
-       * valid target. */
-      printf("[FLASH] GetInfo failed (st=%ld, FlashSize=%lu)\r\n",
-             (long)st, (unsigned long)info.FlashSize);
-    }
     resolved = true;
   }
   return addr;
@@ -66,16 +59,12 @@ int CONFIG_FLASH_Save(const Config_t *cfg)
   int32_t st;
   int ret = -1;
 
-  if (addr == 0u) {
-    printf("[FLASH] save: address not resolved, aborting\r\n");
+  if (addr == 0u)
     return -1;
-  }
 
   st = BSP_XSPI_NOR_DisableMemoryMappedMode(FLASH_INSTANCE);
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] DisableMemoryMappedMode failed (st=%ld)\r\n", (long)st);
+  if (st != BSP_ERROR_NONE)
     goto out;
-  }
 
   /* BSP_XSPI_NOR_ERASE_4K (an enum value, not BSP_XSPI_NOR_BLOCK_4K -- the
    * latter is a byte-size macro that references an undefined symbol in the
@@ -83,10 +72,8 @@ int CONFIG_FLASH_Save(const Config_t *cfg)
    * MX66UW1G45G_BLOCK_4K). CONFIG_FLASH_SECTOR_SIZE above already hardcodes
    * the erased size in bytes (4096) for the address arithmetic. */
   st = BSP_XSPI_NOR_Erase_Block(FLASH_INSTANCE, addr, BSP_XSPI_NOR_ERASE_4K);
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] Erase_Block failed (st=%ld, addr=0x%08lX)\r\n", (long)st, (unsigned long)addr);
+  if (st != BSP_ERROR_NONE)
     goto reenable;
-  }
 
   {
     uint8_t io_buf[CONFIG_FLASH_IO_SIZE] = { 0 };
@@ -94,20 +81,14 @@ int CONFIG_FLASH_Save(const Config_t *cfg)
     memcpy(io_buf, cfg, sizeof(*cfg));
     st = BSP_XSPI_NOR_Write(FLASH_INSTANCE, io_buf, addr, sizeof(io_buf));
   }
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] Write failed (st=%ld, addr=0x%08lX)\r\n", (long)st, (unsigned long)addr);
+  if (st != BSP_ERROR_NONE)
     goto reenable;
-  }
 
   ret = 0;
 
 reenable:
-  st = BSP_XSPI_NOR_EnableMemoryMappedMode(FLASH_INSTANCE);
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] EnableMemoryMappedMode failed (st=%ld)%s\r\n", (long)st,
-           ret == 0 ? " -- config WAS written, but XIP re-enable failed" : "");
+  if (BSP_XSPI_NOR_EnableMemoryMappedMode(FLASH_INSTANCE) != BSP_ERROR_NONE)
     ret = -1;
-  }
 out:
   return ret;
 }
@@ -119,16 +100,12 @@ int CONFIG_FLASH_Load(Config_t *cfg)
   int32_t st;
   int ret = -1;
 
-  if (addr == 0u) {
-    printf("[FLASH] load: address not resolved, aborting\r\n");
+  if (addr == 0u)
     return -1;
-  }
 
   st = BSP_XSPI_NOR_DisableMemoryMappedMode(FLASH_INSTANCE);
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] DisableMemoryMappedMode failed (st=%ld)\r\n", (long)st);
+  if (st != BSP_ERROR_NONE)
     goto out;
-  }
 
   {
     uint8_t io_buf[CONFIG_FLASH_IO_SIZE];
@@ -137,21 +114,13 @@ int CONFIG_FLASH_Load(Config_t *cfg)
     if (st == BSP_ERROR_NONE)
       memcpy(&tmp, io_buf, sizeof(tmp));
   }
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] Read failed (st=%ld, addr=0x%08lX)\r\n", (long)st, (unsigned long)addr);
-  } else if (tmp.magic != CONFIG_MAGIC) {
-    printf("[FLASH] Read ok but magic mismatch (0x%08lX), sector never saved\r\n",
-           (unsigned long)tmp.magic);
-  } else {
+  if (st == BSP_ERROR_NONE && tmp.magic == CONFIG_MAGIC) {
     memcpy(cfg, &tmp, sizeof(*cfg));
     ret = 0;
   }
 
-  st = BSP_XSPI_NOR_EnableMemoryMappedMode(FLASH_INSTANCE);
-  if (st != BSP_ERROR_NONE) {
-    printf("[FLASH] EnableMemoryMappedMode failed (st=%ld)\r\n", (long)st);
+  if (BSP_XSPI_NOR_EnableMemoryMappedMode(FLASH_INSTANCE) != BSP_ERROR_NONE)
     ret = -1;
-  }
 out:
   return ret;
 }

@@ -448,7 +448,6 @@ int REC_Init(void)
   FRESULT res;
   int ret;
 
-  printf("[uSD] REC_Init: power rail...\r\n");
   SD_PowerRail_Init(); /* re-power the card if SD_PowerDown() cut it */
 
   /* SDMMC2 kernel clock: IC4 = PLL1 (800 MHz) / 4 = 200 MHz
@@ -457,7 +456,6 @@ int REC_Init(void)
   clk.Sdmmc2ClockSelection = RCC_SDMMC2CLKSOURCE_IC4;
   clk.ICSelection[RCC_IC4].ClockSelection = RCC_ICCLKSOURCE_PLL1;
   clk.ICSelection[RCC_IC4].ClockDivider = 4;
-  printf("[uSD] REC_Init: SDMMC2 clock config...\r\n");
   if (HAL_RCCEx_PeriphCLKConfig(&clk) != HAL_OK) return -3;
 
   /* BSP SD init (SDMMC2, 4-bit, high speed).  Handles RIF config itself. */
@@ -470,21 +468,15 @@ int REC_Init(void)
    * SDMMC2 kernel clock still enabled at the time -- doing it again here
    * once that clock is gated off hangs forever). */
   if (hsd_sdmmc[0].Instance != NULL && !sd_was_cleanly_powered_down) {
-    printf("[uSD] REC_Init: HAL_SD_DeInit (hot re-entry)...\r\n");
     HAL_SD_DeInit(&hsd_sdmmc[0]);
-    printf("[uSD] REC_Init: HAL_SD_DeInit done\r\n");
   }
-  printf("[uSD] REC_Init: BSP_SD_Init (card identification)...\r\n");
   ret = BSP_SD_Init(0);
-  printf("[uSD] REC_Init: BSP_SD_Init returned %d\r\n", ret);
   if (ret != BSP_ERROR_NONE) return -2;
 
   sd_was_cleanly_powered_down = false; /* peripheral is live again */
 
   /* Mount the FAT32 volume (immediate mount to fail early) */
-  printf("[uSD] REC_Init: f_mount...\r\n");
   res = f_mount(&fs, "", 1);
-  printf("[uSD] REC_Init: f_mount returned %d\r\n", res);
   if (res != FR_OK) return -1;
 
   printf("[uSD] uSD mounted and detected (FAT type %d)\r\n", fs.fs_type);

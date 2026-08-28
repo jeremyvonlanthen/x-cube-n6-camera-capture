@@ -172,7 +172,7 @@ void app_run(void)
 
 	char timestamp[20];
 	char path[40];
-	int rec_files_height = 1080; // 480, 720, 960, 1080 (max)
+	int rec_files_height = 480; // 480, 720, 960, 1080 (max)
 
 	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
 		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
@@ -260,7 +260,6 @@ void app_run(void)
 			break;
 
 		case SD_CARD_INIT:
-			printf("[FSM] SD_CARD_INIT: calling SD_init()...\r\n");
 			if(SD_init()){
 				if(sd_reinit_for_storage){
 					sd_reinit_for_storage = false;
@@ -350,7 +349,7 @@ void app_run(void)
 			//ajouter à l'avenir un contrôle // de mouvement avec le pipe0
 
 			setup_record_h264(rec_files_height);
-			record_h264_to_ram(rec_files_height, 8);
+			record_h264_to_ram(rec_files_height, 30);
 
 			sd_reinit_for_storage = true;
 			state = SD_CARD_INIT;
