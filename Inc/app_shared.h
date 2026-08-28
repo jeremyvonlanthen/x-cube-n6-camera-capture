@@ -8,6 +8,7 @@
 #ifndef APP_SHARED_H
 #define APP_SHARED_H
 
+#include <stdbool.h>
 #include <stdint.h>
 #include "stm32n6xx_hal.h"
 #include "app_jpg.h"
@@ -36,9 +37,9 @@
  *   1. Pick a strategy that sleeps for a known, fixed duration each cycle
  *      (e.g. force sleep_duration_ms to a constant like 1000 for the test).
  *   2. Measure the ACTUAL elapsed sleep time with something independent of
- *      this firmware's own clock (oscilloscope/logic analyzer on the
- *      LED_GREEN pin, or just time the blink period with a stopwatch over
- *      many cycles for a rough number).
+ *      this firmware's own clock (oscilloscope/logic analyzer on a spare
+ *      GPIO pin toggled around the sleep call, or just time it with a
+ *      stopwatch over many cycles for a rough number).
  *   3. new_value = LPTIM_LSI_FREQ_HZ * (requested_ms / measured_ms)
  *   4. Update the constant, reflash, remeasure -- repeat once more if the
  *      new measurement is still off by more than your tolerance.
@@ -77,14 +78,14 @@ typedef enum
   OP_WINDOW_CHECK,
   MOVEMENT_DETECTION,
   RECORD_MODE_INIT,
-  VIDEO_RECORDING,
+  VIDEO_CAPTURE,
   MULTIMEDIA_STORAGE
 } state_t;
 
 typedef enum
 {
 	_CONFIG,
-	_DIURNE,
+	_DIURNAL,
 	_24H
 } mode_t;
 
@@ -104,15 +105,15 @@ extern uint8_t  hires_jpeg_buffer[];
 extern uint8_t *buffer_warmup;
 extern JPG_conf_t jpg_conf;
 
-extern volatile int snapshot_in_progress;
-extern volatile int frame_ready;
-extern volatile int warmup_frames;
-extern volatile int warmup_done;
-extern volatile int uart_busy;
+extern volatile bool snapshot_in_progress;
+extern volatile bool frame_ready;
+extern volatile int  warmup_frames;   /* counter, not a flag: frames seen since warmup_done was cleared */
+extern volatile bool warmup_done;
+extern volatile bool uart_busy;
 
-extern volatile int h264_streaming;
-extern volatile int h264_frame_ready;
-extern volatile int force_intra;
+extern volatile bool h264_streaming;
+extern volatile bool h264_frame_ready;
+extern volatile bool force_intra;
 extern uint8_t * volatile h264_ready_buf;
 extern uint32_t actual_ticks;
 

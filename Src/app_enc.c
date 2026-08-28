@@ -22,6 +22,11 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* NOTE: do NOT include <stdbool.h> in this file -- h264encapi.h below pulls
+ * in basetype.h, which defines its own `bool` as an unguarded
+ * `typedef enum { false = 0, true = 1 } bool;`. stdbool.h's macros would
+ * rewrite that typedef (bool/true/false all become macros) and break the
+ * build. Keep is_sps_pps_done below as a plain int for this reason. */
 #include "h264encapi.h"
 #include "jpegencapi.h"
 #include "stm32n6xx_hal.h"

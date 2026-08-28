@@ -28,12 +28,12 @@ int CMW_CAMERA_PIPE_FrameEventCallback(uint32_t pipe)
       /* Double-buffer mode: P1STM0AR (status reg) holds the address of the
        * buffer the hardware just completed (VENC_SDCard example pattern). */
       h264_ready_buf = (uint8_t *)hcamera_dcmipp.Instance->P1STM0AR;
-      h264_frame_ready = 1;
+      h264_frame_ready = true;
     }
     else if (!warmup_done)
       warmup_frames++;
     else if (snapshot_in_progress)
-      frame_ready = 1;
+      frame_ready = true;
   }
   return HAL_OK;
 }

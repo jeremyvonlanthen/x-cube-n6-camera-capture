@@ -29,9 +29,10 @@ static uint32_t size_pipe2 = 0;
  * DCMIPP pipes configuration (detect mode)
  * ========================================================================== */
 
-/* Applies the crop/decimation/downsize configuration received from the GUI
- * (config_py) to DCMIPP pipe1 and pipe2, then allocates the matching
- * capture buffers from the AXISRAM pool.
+/* Applies the crop/decimation/downsize configuration currently held in
+ * config_py (received from the GUI over UART, or reloaded from flash by the
+ * caller -- see CONFIG_FLASH_Load in the FSM) to DCMIPP pipe1 and pipe2,
+ * then allocates the matching capture buffers from the AXISRAM pool.
  * NOTE: axisram_alloc never frees — repeated detect-mode entries consume
  * the pool. */
 void dcmipp_apply_detect_config(void)
@@ -119,23 +120,38 @@ int capture_detect_frame(void)
 {
   uint32_t start;
 
-  snapshot_in_progress = 1;
-  frame_ready = 0;
+  snapshot_in_progress = true;
+  frame_ready = false;
   CAM_CapturePipe_Start(buffer_pipe1_capture, buffer_pipe2_capture, CMW_MODE_SNAPSHOT, 1);
 
   start = HAL_GetTick();
   while (!frame_ready) {
     if (HAL_GetTick() - start > 1000) {
-      snapshot_in_progress = 0;
+      snapshot_in_progress = false;
       return -1;
     }
     vTaskDelay(pdMS_TO_TICKS(1));
   }
-  snapshot_in_progress = 0;
+  snapshot_in_progress = false;
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_pipe1_capture, CACHE_ALIGN_SIZE(size_pipe1));
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_pipe2_capture, CACHE_ALIGN_SIZE(size_pipe2));
 
   return 0;
+}
+
+void dcmipp_get_detect_dims(uint16_t *width_pipe1, uint16_t *height_pipe1,
+                             uint16_t *width_pipe2, uint16_t *height_pipe2)
+{
+  *width_pipe1  = (uint16_t)downsize_conf_pipe1.HSize;
+  *height_pipe1 = (uint16_t)downsize_conf_pipe1.VSize;
+  *width_pipe2  = (uint16_t)downsize_conf_pipe2.HSize;
+  *height_pipe2 = (uint16_t)downsize_conf_pipe2.VSize;
+}
+
+void dcmipp_get_capture_buffers(uint8_t **buffer_pipe1, uint8_t **buffer_pipe2)
+{
+  *buffer_pipe1 = buffer_pipe1_capture;
+  *buffer_pipe2 = buffer_pipe2_capture;
 }
 

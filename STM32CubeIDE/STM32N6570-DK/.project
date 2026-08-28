@@ -57,6 +57,16 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_cvt.c</locationURI>
 		</link>
 		<link>
+			<name>Src/app_detect.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_detect.c</locationURI>
+		</link>
+		<link>
+			<name>Src/app_flash_config.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_flash_config.c</locationURI>
+		</link>
+		<link>
 			<name>Src/app_fuseprogramming.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_fuseprogramming.c</locationURI>

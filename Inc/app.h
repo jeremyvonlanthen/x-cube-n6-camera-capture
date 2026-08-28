@@ -27,7 +27,7 @@ void app_run(void);
 
 /* --- Building blocks for the state machine (implemented in app.c) --- */
 
-/* One-time init: LEDs, TAMP button, SD card + FAT32 + SD writer task */
+/* One-time init: TAMP button, SD card + FAT32 + SD writer task */
 void app_recorder_init(void);
 
 /* Config mode: full-res YUV422 captures served to the Python GUI over UART,

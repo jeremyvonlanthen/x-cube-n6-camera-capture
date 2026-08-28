@@ -20,6 +20,7 @@
  ******************************************************************************
  */
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -124,9 +125,9 @@ static StaticSemaphore_t sem_stopped_struct;
 
 /* Enables the SD card's own power supply (U28). Idempotent: safe to call on
  * every REC_Init(), including the very first boot. Assumes an active-high
- * enable (SET = powered) -- if REC_PowerDownSD() turns out not to reduce
+ * enable (SET = powered) -- if SD_PowerDown() turns out not to reduce
  * consumption once this is wired in, the polarity is inverted: swap SET/RESET
- * below and in REC_PowerDownSD(). */
+ * below and in SD_PowerDown(). */
 static void SD_PowerRail_Init(void)
 {
   GPIO_InitTypeDef gpio_init = {0};
@@ -152,8 +153,8 @@ static MP4E_mux_t *mux;
 static int   mux_track;
 static int   sps_done, pps_done;
 static unsigned frame_duration;   /* in MP4_TIMESCALE units */
-static int   rec_error;
-static volatile int rec_active;
+static bool  rec_error;
+static volatile bool rec_active;
 
 static volatile int jpeg_result;  /* REC_MSG_JPEG outcome (SD task -> caller) */
 
@@ -376,7 +377,7 @@ static void rec_task_fct(void *arg)
       /* Note: frames queued before a STOP are still written (FIFO order) */
       if (!rec_error && mux != NULL) {
         if (rec_write_access_unit(&rec_ring[msg.offset], msg.len, msg.duration) != 0)
-          rec_error = 1;
+          rec_error = true;
       }
       /* release the ring bytes (frame + wasted tail gap) */
       taskENTER_CRITICAL();
@@ -392,7 +393,7 @@ static void rec_task_fct(void *arg)
         int err = MP4E_close(mux);
         if (err != MP4E_STATUS_OK) {
           printf("[REC] MP4E_close err=%d\r\n", err);
-          rec_error = 1;
+          rec_error = true;
         }
         mux = NULL;
       }
@@ -408,14 +409,47 @@ static void rec_task_fct(void *arg)
 /* ------------------------------------------------------------------------ */
 /* Public API                                                                */
 /* ------------------------------------------------------------------------ */
+int SD_init(void)
+{
+  int rec_ready = REC_Init();
+
+  switch (rec_ready) {
+  case 0:
+    break;
+  case -1:
+    printf("[uSD] required formatting failed (FAT32)\r\n");
+    break;
+  case -2:
+    printf("[uSD] no uSD card detected/mounted (retry in 2 sec)\r\n");
+    break;
+  case -3:
+    printf("[uSD] SDMMC2 clock config failed\r\n");
+    break;
+  default:
+    break;
+  }
+
+  return (rec_ready == 0);
+}
+
+/* Tracks whether SD_PowerDown() was the last thing done to hsd_sdmmc[0]:
+ * it already runs BSP_SD_DeInit() (HAL_SD_DeInit + SDMMC2 clock gated off),
+ * so REC_Init()'s own hot-removal HAL_SD_DeInit() call below must be
+ * skipped in that case -- calling it again with the SDMMC2 kernel clock
+ * disabled hangs forever (confirmed on hardware). Only a genuine
+ * hot-removal (card pulled while the peripheral was still live, caught via
+ * BSP_SD_IsDetected() in MOVEMENT_DETECTION) needs that reset. */
+static volatile bool sd_was_cleanly_powered_down = false;
+
 int REC_Init(void)
 {
-  static int rtos_done = 0;   /* FreeRTOS objects created only once */
+  static bool rtos_done = false;   /* FreeRTOS objects created only once */
   RCC_PeriphCLKInitTypeDef clk = { 0 };
   FRESULT res;
   int ret;
 
-  SD_PowerRail_Init(); /* re-power the card if REC_PowerDownSD() cut it */
+  printf("[uSD] REC_Init: power rail...\r\n");
+  SD_PowerRail_Init(); /* re-power the card if SD_PowerDown() cut it */
 
   /* SDMMC2 kernel clock: IC4 = PLL1 (800 MHz) / 4 = 200 MHz
    * (same 200 MHz kernel clock as the ST VENC_SDCard example). */
@@ -423,22 +457,34 @@ int REC_Init(void)
   clk.Sdmmc2ClockSelection = RCC_SDMMC2CLKSOURCE_IC4;
   clk.ICSelection[RCC_IC4].ClockSelection = RCC_ICCLKSOURCE_PLL1;
   clk.ICSelection[RCC_IC4].ClockDivider = 4;
+  printf("[uSD] REC_Init: SDMMC2 clock config...\r\n");
   if (HAL_RCCEx_PeriphCLKConfig(&clk) != HAL_OK) return -3;
 
   /* BSP SD init (SDMMC2, 4-bit, high speed).  Handles RIF config itself. */
   /* Recover from a hot-removal: reset the HAL SD handle so BSP_SD_Init
    * redoes a full, clean card identification.  A plain HAL_SD_DeInit is
    * enough here (BSP_SD_DeInit's fuller teardown -- clocks/GPIO/VDDIO5 --
-   * is unnecessary for this quick reset, see REC_PowerDownSD() for that).
-   * Skipped on the very first boot (handle not yet initialized). */
-  if (hsd_sdmmc[0].Instance != NULL) {
+   * is unnecessary for this quick reset, see SD_PowerDown() for that).
+   * Skipped on the very first boot (handle not yet initialized) AND after a
+   * clean SD_PowerDown() (which already ran HAL_SD_DeInit itself, with the
+   * SDMMC2 kernel clock still enabled at the time -- doing it again here
+   * once that clock is gated off hangs forever). */
+  if (hsd_sdmmc[0].Instance != NULL && !sd_was_cleanly_powered_down) {
+    printf("[uSD] REC_Init: HAL_SD_DeInit (hot re-entry)...\r\n");
     HAL_SD_DeInit(&hsd_sdmmc[0]);
+    printf("[uSD] REC_Init: HAL_SD_DeInit done\r\n");
   }
+  printf("[uSD] REC_Init: BSP_SD_Init (card identification)...\r\n");
   ret = BSP_SD_Init(0);
+  printf("[uSD] REC_Init: BSP_SD_Init returned %d\r\n", ret);
   if (ret != BSP_ERROR_NONE) return -2;
 
+  sd_was_cleanly_powered_down = false; /* peripheral is live again */
+
   /* Mount the FAT32 volume (immediate mount to fail early) */
+  printf("[uSD] REC_Init: f_mount...\r\n");
   res = f_mount(&fs, "", 1);
+  printf("[uSD] REC_Init: f_mount returned %d\r\n", res);
   if (res != FR_OK) return -1;
 
   printf("[uSD] uSD mounted and detected (FAT type %d)\r\n", fs.fs_type);
@@ -468,24 +514,37 @@ int REC_Init(void)
 
     xTaskCreateStatic(rec_task_fct, "sd_rec", REC_TASK_STACK_SIZE, NULL,
                       REC_TASK_PRIORITY, rec_task_stack, &rec_task_tcb);
-    rtos_done = 1;
+    rtos_done = true;
   }
 
   return 0;
 }
 
-void REC_PowerDownSD(void)
+void SD_PowerDown(void)
 {
   f_mount(NULL, "", 0);   /* unmount cleanly before pulling the rug */
   BSP_SD_DeInit(0);       /* HAL SD de-init + SDMMC2 clock/GPIO off */
   HAL_GPIO_WritePin(SD_PWR_GPIO_PORT, SD_PWR_GPIO_PIN, GPIO_PIN_RESET); /* U28 off: card actually unpowered */
+  sd_was_cleanly_powered_down = true; /* skip REC_Init()'s redundant HAL_SD_DeInit next time */
   printf("[uSD] SD powered down\r\n");
+}
+
+/* Creates dirname on the FAT32 volume, tolerating FR_EXIST. */
+int REC_MakeDir(const char *dirname)
+{
+  FRESULT res = f_mkdir(dirname);
+
+  if (res != FR_OK && res != FR_EXIST) {
+    printf("[REC] f_mkdir('%s') failed (%d)\r\n", dirname, res);
+    return -1;
+  }
+  return 0;
 }
 
 /* ------------------------------------------------------------------------ */
 /* SD clock gating (fast-resume sleep, no re-init)                          */
 /*                                                                          */
-/* Unlike REC_PowerDownSD(), this keeps the card selected (RCA/CID/CSD in   */
+/* Unlike SD_PowerDown(), this keeps the card selected (RCA/CID/CSD in   */
 /* hsd_sdmmc[0] untouched), the GPIO/AF config untouched and the FAT32      */
 /* volume mounted -- only the SDMMC2 bus clock is gated. MX_SDMMC1_SD_Init()*/
 /* sets ClockPowerSave = DISABLE, so that clock free-runs (up to 50 MHz)    */
@@ -493,14 +552,14 @@ void REC_PowerDownSD(void)
 /* active" current actually goes. REC_WakeSD() just re-enables the clock -- */
 /* no BSP_SD_Init, no f_mount, no card re-identification needed.            */
 /* ------------------------------------------------------------------------ */
-static volatile int sd_asleep = 0;
+static volatile bool sd_asleep = false;
 
 void REC_SleepSD(void)
 {
   if (!sd_asleep) {
     HAL_NVIC_DisableIRQ(SDMMC2_IRQn); /* no transfer can be in flight once asleep */
     __HAL_RCC_SDMMC2_CLK_DISABLE();
-    sd_asleep = 1;
+    sd_asleep = true;
     printf("[uSD] SD clock gated (sleep)\r\n");
   }
 }
@@ -510,7 +569,7 @@ void REC_WakeSD(void)
   if (sd_asleep) {
     __HAL_RCC_SDMMC2_CLK_ENABLE();
     HAL_NVIC_EnableIRQ(SDMMC2_IRQn);
-    sd_asleep = 0;
+    sd_asleep = false;
     printf("[uSD] SD clock restored (awake)\r\n");
   }
 }
@@ -531,7 +590,7 @@ int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_siz
   mp4_pool_reset();
   sps_done = 0;
   pps_done = 0;
-  rec_error = 0;
+  rec_error = false;
   frame_duration = MP4_TIMESCALE / (unsigned)fps;
 
   /* Ring is empty here: the previous recording (if any) was fully drained
@@ -583,7 +642,7 @@ int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_siz
     return -1;
   }
 
-  rec_active = 1;
+  rec_active = true;
   return 0;
 }
 
@@ -648,7 +707,7 @@ int REC_Stop(void)
   if (!rec_active)
     return -1;
 
-  rec_active = 0;
+  rec_active = false;
 
   msg.type   = REC_MSG_STOP;
   msg.offset = 0;

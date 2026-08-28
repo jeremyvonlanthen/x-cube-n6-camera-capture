@@ -14,6 +14,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* One-time peripheral init: initializes the SD recorder (REC_Init: SD card +
+ * FAT32 mount + FreeRTOS SD writer task) and logs the failure reason on the
+ * various error codes REC_Init can return.  Returns 1 on success, 0 on
+ * failure (caller should retry after a short delay). */
+int SD_init(void);
+
 /* Called once at startup (before any REC_Start).  Configures the SDMMC2
  * kernel clock, initializes the BSP SD, mounts the FAT32 volume and creates
  * the SD writer task.  Returns 0 on success. */
@@ -25,9 +31,9 @@ int REC_Init(void);
  * (also used by the console UART pins), not an SD-only rail; see
  * SD_MspDeInit() in stm32n6570_discovery_sd.c. REC_Init() must be called
  * again before any further SD access. */
-void REC_PowerDownSD(void);
+void SD_PowerDown(void);
 
-/* Lighter alternative to REC_PowerDownSD(): gates only the SDMMC2 bus clock,
+/* Lighter alternative to SD_PowerDown(): gates only the SDMMC2 bus clock,
  * which free-runs continuously (up to 50 MHz) whenever the card is
  * initialized -- the dominant contributor to "SD active" current. The card
  * stays selected and the FAT32 volume stays mounted, so REC_WakeSD() resumes
@@ -35,6 +41,12 @@ void REC_PowerDownSD(void);
  * REC_WakeSD() before any SD read/write, and REC_SleepSD() again once done. */
 void REC_SleepSD(void);
 void REC_WakeSD(void);
+
+/* Creates dirname on the FAT32 volume (e.g. a per-recording "<timestamp>/"
+ * folder). Tolerates an already-existing directory. Called directly from the
+ * caller thread, same as REC_Start's f_open -- no FreeRTOS queue involved.
+ * Returns 0 on success. */
+int REC_MakeDir(const char *dirname);
 
 /* Opens a new VID_xxxx.MP4 on the card and starts the muxer.
  * ring_buf/ring_size: caller-provided PSRAM area used to buffer encoded

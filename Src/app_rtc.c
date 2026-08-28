@@ -6,13 +6,14 @@
  */
 #include "app_rtc.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "stm32n6xx_hal.h"
 
 /* Defined in main.c (RTC_Config) */
 extern RTC_HandleTypeDef hrtc;
-extern volatile int rtc_ready;
+extern volatile bool rtc_ready;
 
 void rtc_set_datetime(const uint8_t dt[6])
 {

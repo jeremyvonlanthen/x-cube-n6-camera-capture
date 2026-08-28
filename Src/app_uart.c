@@ -18,9 +18,9 @@
 
 /* Sends one encoded JPEG over UART:
  *   0xAA | length (4 B, little endian) | JPEG data | exposure (4 B) | gain (4 B) */
-void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
+void send_yuv_uart(const uint8_t *jpeg, int jpeg_len)
 {
-	uart_busy = 1;
+	uart_busy = true;
 
   uint8_t sync = 0xAA;
   uint8_t size_buf[4];
@@ -53,6 +53,6 @@ void send_jpeg_uart(const uint8_t *jpeg, int jpeg_len)
   CMW_CAMERA_GetGain(&gain);
   HAL_UART_Transmit(&huart1, (uint8_t *)&gain, sizeof(gain), HAL_MAX_DELAY);
 
-  uart_busy = 0;
+  uart_busy = false;
 }
 

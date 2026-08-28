@@ -39,6 +39,8 @@
 #include "app_uart.h"
 #include "app_capture.h"
 #include "app_cam.h"
+#include "app_detect.h"
+#include "app_flash_config.h"
 #include "app_pipes.h"
 #include "app_record.h"
 #include "app_callbacks.h"
@@ -79,20 +81,21 @@ uint8_t *buffer_warmup = NULL;
 JPG_conf_t jpg_conf = { 0 };
 
 /* Capture/mode flags */
-volatile int sd_reinit_for_storage = 0;
-volatile int snapshot_in_progress = 0;
-volatile int frame_ready = 0;
-volatile int warmup_frames = 0;
-volatile int warmup_done = 0;
-volatile int uart_busy = 0; //1 = UART used for binary data, printf muted
-volatile int config_already_saved = 0;
+volatile bool sd_reinit_for_storage = false;
+volatile bool snapshot_in_progress = false;
+volatile bool frame_ready = false;
+volatile int  warmup_frames = 0;
+volatile bool warmup_done = false;
+volatile bool uart_busy = false; //true = UART used for binary data, printf muted
+volatile bool config_already_saved = false;
+volatile bool is_video_to_record = false;
+uint32_t actual_ticks;
 
 /* H264 recording state (shared with app_record.c / app_callbacks.c) */
-volatile int h264_streaming = 0;
-volatile int h264_frame_ready = 0;
-volatile int force_intra = 0;
+volatile bool h264_streaming = false;
+volatile bool h264_frame_ready = false;
+volatile bool force_intra = false;
 uint8_t * volatile h264_ready_buf = NULL;
-uint32_t actual_ticks;
 
 /* ==========================================================================
  * Console & memory helpers
@@ -142,41 +145,14 @@ void axisram_reset(void)
  * Public API (building blocks for the state machine)
  * ========================================================================== */
 
-/* One-time peripheral init: LEDs, TAMP button (polling) and SD recorder
- * (SD card + FAT32 mount + FreeRTOS SD writer task). */
-int SD_init(void)
+/* TODO: replace with the real animal-classification algorithm (NPU model?).
+ * Runs on the still image just captured by record_snapshot_to_ram() (in
+ * buffer_full_frame / hires_jpeg_buffer). For now always answers "yes" so
+ * the video path is what gets exercised end-to-end until a real classifier
+ * is wired in here. */
+static bool is_target_animal_detected(void)
 {
-	int rec_ready = REC_Init();
-	switch(rec_ready)
-	{
-	case 0:
-		break;
-	case -1:
-		printf("[uSD] required formatting failed (FAT32)\r\n");
-		break;
-	case -2:
-		printf("[uSD] no uSD card detected/mounted (retry in 2 sec)\r\n");
-		break;
-	case -3:
-		printf("[uSD] SDMMC2 clock config failed\r\n");
-		break;
-	default:
-		break;
-	}
-
-  return (rec_ready == 0);
-}
-
-void LED_mode(void)
-{
-	if(state < MOVEMENT_DETECTION){ // configuration process
-		BSP_LED_Off(LED_GREEN);
-		BSP_LED_On(LED_RED);
-	}
-	else{ // detection phase
-		BSP_LED_On(LED_GREEN);
-		BSP_LED_Off(LED_RED);
-	}
+  return true; /* TODO */
 }
 
 /* ==========================================================================
@@ -195,16 +171,17 @@ void app_run(void)
 	#endif
 
 	char timestamp[20];
+	char path[40];
 	int rec_files_height = 1080; // 480, 720, 960, 1080 (max)
 
 	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
-		printf("[FSM] RUNS NOW IN DIURNE MODE (until system restart)\r\n");
-		mode = _DIURNE;
+		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
+		mode = _24H;
 		state = SD_CARD_INIT;
 	}
 	else if(HAL_GPIO_ReadPin(GPIOH, GPIO_PIN_5) == GPIO_PIN_RESET){
-		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
-		mode = _24H;
+		printf("[FSM] RUNS NOW IN DIURNAL MODE (until system restart)\r\n");
+		mode = _DIURNAL;
 		state = SD_CARD_INIT;
 	}
 	else
@@ -212,10 +189,6 @@ void app_run(void)
 
 	while(1)
 	{
-		#if DEBUG_MODE
-		LED_mode();
-		#endif
-
 		switch(state)
 		{
 		case CONFIG_MODE_WARMUP:
@@ -236,7 +209,7 @@ void app_run(void)
 				int jpeg_len = capture_yuv();
 				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
 				HAL_Delay(50);
-				send_jpeg_uart(hires_jpeg_buffer, jpeg_len);
+				send_yuv_uart(hires_jpeg_buffer, jpeg_len);
 				break;
 
 			case 'T':
@@ -260,7 +233,7 @@ void app_run(void)
 
 			if (config_py.magic == CONFIG_MAGIC){
 				answer = 'V';
-				printf("[FSM] pipes config successfully received\r\n");
+				printf("[FSM] pipes config successfully received, storing...\r\n");
 				HAL_UART_Transmit(&huart1, &answer, 1, 100);
 
 				state = SAVE_PIPES_CONFIG;
@@ -272,22 +245,31 @@ void app_run(void)
 		case SAVE_PIPES_CONFIG:
 			if(config_already_saved) break;
 
-			//sauver la configuration dans la flash pour pouvoir y réaccéder après une extinction du STM
-			//déclarer une adresse fixe pour pouvoir accéder à la config sauvée
-			printf("[FSM] pipes config saved\n\r");
-			config_already_saved = 1;
+			/* Sauver la configuration dans la flash a une adresse fixe pour
+			 * pouvoir y réaccéder après une extinction du STM (voir
+			 * app_flash_config.h). dcmipp_apply_detect_config() la relira à
+			 * chaque entrée dans DETECT_MODE_WARMUP -- notamment sur un boot
+			 * DIURNAL/24H, qui saute entièrement cette phase de config UART. */
+			if (CONFIG_FLASH_Save(&config_py) == 0)
+				printf("[FSM] pipes config saved to flash\n"
+						"[FSM] now ready to execute diurnal or 24h mode\r\n");
+			else
+				printf("[FSM] pipes config flash save FAILED\r\n");
+
+			config_already_saved = true;
 			break;
 
 		case SD_CARD_INIT:
+			printf("[FSM] SD_CARD_INIT: calling SD_init()...\r\n");
 			if(SD_init()){
 				if(sd_reinit_for_storage){
-					sd_reinit_for_storage = 0;
+					sd_reinit_for_storage = false;
 					state = MULTIMEDIA_STORAGE;
-					break;
 				}
-
-				REC_PowerDownSD();
-				state = DETECT_MODE_WARMUP;
+				else{
+					SD_PowerDown();
+					state = DETECT_MODE_WARMUP;
+				}
 				break;
 			}
 			sleep_short_period(2000);
@@ -297,8 +279,17 @@ void app_run(void)
 			printf("[FSM] detection-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
+			if(config_py.magic != CONFIG_MAGIC){
+				if (CONFIG_FLASH_Load(&config_py) == 0) printf("[FSM] pipes config loaded from flash\r\n");
+				else printf("[FSM] pipes config flash load FAILED (config_py memory empty)\r\n");
+			}
+
 			printf("[FSM] pipes configuration procedure\r\n");
-			dcmipp_apply_detect_config(); //utiliser ici la config précédemment sauvée dans la flash
+			dcmipp_apply_detect_config();
+
+			printf("[FSM] detect stats calibration...\r\n");
+			DETECT_Init();
+			DETECT_CalibrateStats();
 
 			state = OP_WINDOW_CHECK;
 			break;
@@ -313,28 +304,28 @@ void app_run(void)
 			//si nuit: standby/système OFF
 			//si jour: state = MOVEMENT_DETECTION
 			uint8_t day_window = 1;
-			printf("[FSM] check diurne operating window: %s\r\n", day_window ? "DAY" : "NIGHT");
+			printf("[FSM] check diurnal operating window: %s\r\n", day_window ? "DAY" : "NIGHT");
 
-			if(day_window)
+			if(day_window){
 				state = MOVEMENT_DETECTION;
-			else{} //standby/système OFF
-			break;
-
-		case MOVEMENT_DETECTION:
-//			int ret = capture_detect_frame();
-			//ajouter ici le code de Léonard: capture d'image et algo détection sur les 2 pipes
-
-			if(BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
-				printf("[FSM] movement detected!\r\n");
-				actual_ticks = HAL_GetTick();
-				state = RECORD_MODE_INIT;
 				break;
 			}
 
+			//standby/système OFF
+			break;
+
+		case MOVEMENT_DETECTION:
 			//check of mecanical insertion of SD card
 			if(BSP_SD_IsDetected(0) != SD_PRESENT){
 				printf("[uSD] uSD has been removed, SD re-init...\r\n");
 				state = SD_CARD_INIT;
+				break;
+			}
+
+			if(DETECT_ProcessFrame() || BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
+				printf("[FSM] movement detected!\r\n");
+				actual_ticks = HAL_GetTick();
+				state = RECORD_MODE_INIT;
 				break;
 			}
 
@@ -343,25 +334,43 @@ void app_run(void)
 			break;
 
 		case RECORD_MODE_INIT:
-//			rtc_make_timestamp(timestamp, sizeof(timestamp));
-//			record_jpeg_sd(timestamp, rec_files_height);
-//			record_camera_setup(rec_files_height);
+			rtc_make_timestamp(timestamp, sizeof(timestamp));
+			record_snapshot_to_ram(rec_files_height);
 
-			state = VIDEO_RECORDING;
+			is_video_to_record = is_target_animal_detected();
+			if(is_video_to_record)
+				state = VIDEO_CAPTURE;
+			else{
+				sd_reinit_for_storage = true;
+				state = SD_CARD_INIT;
+			}
 			break;
 
-		case VIDEO_RECORDING:
+		case VIDEO_CAPTURE:
 			//ajouter à l'avenir un contrôle // de mouvement avec le pipe0
 
-//			record_h264_run(timestamp, rec_files_height, 8);
+			setup_record_h264(rec_files_height);
+			record_h264_to_ram(rec_files_height, 8);
 
-			sd_reinit_for_storage = 1;
+			sd_reinit_for_storage = true;
 			state = SD_CARD_INIT;
 			break;
 
 		case MULTIMEDIA_STORAGE:
-			//sauvegarde jpeg et mp4 dans la carte SD
-			REC_PowerDownSD();
+			REC_MakeDir(timestamp);
+
+			if(is_video_to_record){
+				snprintf(path, sizeof(path), "%s/video.mp4", timestamp);
+				if (record_h264_flush_to_sd(path) == 0) printf("[FSM] video saved to %s\r\n", path);
+				else printf("[FSM] video save FAILED\r\n");
+			}
+			else{
+				snprintf(path, sizeof(path), "%s/image.jpeg", timestamp);
+				if (record_snapshot_flush_to_sd(path) == 0) printf("[FSM] photo saved to %s\r\n", path);
+				else printf("[FSM] photo save FAILED\r\n");
+			}
+
+			SD_PowerDown();
 			state = DETECT_MODE_WARMUP;
 			break;
 

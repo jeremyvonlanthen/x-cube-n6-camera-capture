@@ -16,6 +16,7 @@
  ******************************************************************************
  */
 #include <assert.h>
+#include <stdbool.h>
 #include "cmw_camera.h"
 #include "app_cam.h"
 #include "app_config.h"
@@ -40,7 +41,7 @@
 #define SENSOR_HEIGHT    0
 
 static CMW_Sensor_Name_t sensor;
-static int is_sensor_valid = 0;
+static bool is_sensor_valid = false;
 
 static int CAM_getFlipMode(CMW_Sensor_Name_t sensor)
 {
@@ -195,7 +196,7 @@ void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes)
   int ret;
 
   if (!is_sensor_valid) {
-    is_sensor_valid = 1;
+    is_sensor_valid = true;
     ret = CMW_CAMERA_GetSensorName(&sensor);
     assert(ret == CMW_ERROR_NONE);
   }

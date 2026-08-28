@@ -11,6 +11,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 #include "app_cam.h"
 #include "app_jpg.h"
 #include "app_rec.h"
@@ -23,8 +24,9 @@
 #include "task.h"
 
 /* H264 recording configuration (module-private).
- * The video resolution (4:3) is passed to record_camera_setup()/record_h264_run()
- * as their 'height' argument; the width is derived (height * 4 / 3).  It must stay
+ * The video resolution (4:3) is passed to setup_record_h264()/
+ * record_h264_to_ram() as their 'height' argument; the width is
+ * derived (height * 4 / 3).  It must stay
  * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
  * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
 #define H264_FPS              25
@@ -34,6 +36,11 @@
 
 /* VENC hardware output buffer (module-private) */
 static uint8_t h264_venc_out[H264_VENC_OUT_SIZE] ALIGN_32 IN_PSRAM;
+
+/* Length of the JPEG in hires_jpeg_buffer, filled by record_snapshot_to_ram()
+ * and consumed by record_snapshot_flush_to_sd() -- mirrors the h264_ram_*
+ * state below for the video path. */
+static int snapshot_jpeg_len;
 
 /* ==========================================================================
  * H264 -> MP4 / JPEG recording to microSD
@@ -57,45 +64,43 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
   return res;
 }
 
-/* Takes one snapshot (camera is still in the post-warmup configuration),
- * encodes it to JPEG (hardware) and saves it to the SD card as
- * <timestamp>.jpg through the FreeRTOS SD writer task (app_rec.c).
- * Called in RECORD_MODE_WARMUP, right before record_camera_setup().
- *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res). */
-void record_jpeg_sd(const char *timestamp, int height)
+/* Takes one snapshot (camera is still in the post-warmup configuration) and
+ * encodes it to JPEG (hardware) into hires_jpeg_buffer -- no SD access here;
+ * record_snapshot_flush_to_sd() writes it out once the card is mounted.
+ * Called in RECORD_MODE_INIT.
+ *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res).
+ * Returns the encoded length (> 0), or <= 0 on capture/encode failure. */
+int record_snapshot_to_ram(int height)
 {
   int width = height * 4 / 3;      /* 4:3, full-scene downscale from sensor */
-  char fname[40];
   int jpeg_len;
   uint32_t start;
-
-  snprintf(fname, sizeof(fname), "%s.jpg", timestamp);
 
   /* COLOR snapshot while the camera runs in detect (mono, cropped/downsized)
    * mode: reconfigure PIPE1 ONLY to a full-scene width x height YUV422
    * downscale (ROI = full sensor).  The sensor is untouched, so the
    * AE/exposure converged during the detect warmup stay valid -> no delay,
-   * color is immediate.  No restore needed: record_camera_setup() reconfigures
-   * the camera right after, and DETECT_MODE_WARMUP re-applies the detect setup
-   * once the recording is done. */
+   * color is immediate.  No restore needed: DETECT_MODE_WARMUP re-applies the
+   * detect setup once the record cycle is done (setup_record_h264()
+   * reconfigures pipe1 again first if this turns out to be a video). */
   CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
                       width, height, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
 
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
-  snapshot_in_progress = 1;
-  frame_ready = 0;
+  snapshot_in_progress = true;
+  frame_ready = false;
   CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
 
   start = HAL_GetTick();
   while (!frame_ready) {
     if (HAL_GetTick() - start > 5000) {
-      snapshot_in_progress = 0;
+      snapshot_in_progress = false;
       printf("[REC] snapshot capture timeout\r\n");
-      return;
+      return -1;
     }
     vTaskDelay(pdMS_TO_TICKS(1));
   }
-  snapshot_in_progress = 0;
+  snapshot_in_progress = false;
 
   {
     int32_t je = 0, jg = 0;
@@ -117,28 +122,37 @@ void record_jpeg_sd(const char *timestamp, int height)
   SCB_CleanDCache_by_Addr((uint32_t *)hires_jpeg_buffer, CACHE_ALIGN_SIZE(jpeg_len));
   JPG_Deinit();
 
-  if (jpeg_len <= 0) {
+  if (jpeg_len <= 0)
     printf("[REC] JPG encode failed (%d)\r\n", jpeg_len);
-    return;
-  }
 
-  /* Written by the SD writer task (FreeRTOS); blocks until file closed */
-  if (REC_SaveJpeg(hires_jpeg_buffer, (size_t)jpeg_len, fname) != 0)
-    printf("[REC] snapshot save FAILED\r\n");
+  snapshot_jpeg_len = jpeg_len;
+  return jpeg_len;
+}
+
+/* Writes the JPEG captured by record_snapshot_to_ram() to fname on the SD
+ * card, through REC_SaveJpeg (FreeRTOS SD writer task). Called in
+ * MULTIMEDIA_STORAGE, once SD_CARD_INIT has succeeded.
+ * Returns 0 on success. */
+int record_snapshot_flush_to_sd(const char *fname)
+{
+  if (snapshot_jpeg_len <= 0)
+    return -1;
+
+  return REC_SaveJpeg(hires_jpeg_buffer, (size_t)snapshot_jpeg_len, fname);
 }
 
 /* Prepares the camera for H264 recording: reconfigures to (height*4/3) x height
  * RGB565 (full-scene downscale), (re)inits the VENC + H264 encoder once, starts
  * the double-buffered capture and lets the AE settle.  Called in
- * RECORD_MODE_WARMUP, right before record_h264_run(); leaves the double-buffered
- * capture running for it.
+ * VIDEO_CAPTURE, right before record_h264_to_ram(); leaves the
+ * double-buffered capture running for it.
  *   height : 4:3 video height, must be <= H264_MAX_HEIGHT (width is derived). */
-void record_camera_setup(int height)
+void setup_record_h264(int height)
 {
   /* LL_VENC_Init and ENC_Init must each be called exactly once —
    * ENC_DeInit crashes on this target.  Init once on first entry,
    * reuse on every subsequent call (same pattern as the USB phase). */
-  static int hw_initialized = 0;
+  static bool hw_initialized = false;
 
   int width = height * 4 / 3;                                 /* 4:3 */
   uint32_t frame_bytes = (uint32_t)width * (uint32_t)height * 2u; /* RGB565 */
@@ -182,7 +196,7 @@ void record_camera_setup(int height)
     enc_conf.fps    = H264_FPS;
     ENC_Init(&enc_conf);
 
-    hw_initialized = 1;
+    hw_initialized = true;
   } else {
     /* Encoder hardware reused: reset pic_cnt so IDR counting restarts.
      * is_sps_pps_done was already cleared by ENC_EndSession() at the
@@ -191,15 +205,15 @@ void record_camera_setup(int height)
     ENC_ResetSession();
   }
 
-  force_intra       = 0;
-  h264_frame_ready  = 0;
+  force_intra       = false;
+  h264_frame_ready  = false;
   h264_ready_buf    = buffer_full_frame;
 
   /* Start double-buffered continuous capture (two 720p frames inside
    * buffer_full_frame).  Single-buffer capture caused tearing artifacts on
    * the right side of the image: VENC was reading the frame while DCMIPP
    * was still overwriting it. */
-  h264_streaming = 1;
+  h264_streaming = true;
   {
     int ret = CMW_CAMERA_DoubleBufferStart(DCMIPP_PIPE1,
                                            buffer_full_frame,
@@ -215,7 +229,7 @@ void record_camera_setup(int height)
     uint32_t t0 = HAL_GetTick();
     while (skipped < H264_AE_WARMUP_FRAMES && HAL_GetTick() - t0 < 2000) {
       if (h264_frame_ready) {
-        h264_frame_ready = 0;
+        h264_frame_ready = false;
         skipped++;
       } else {
         vTaskDelay(pdMS_TO_TICKS(1));
@@ -231,61 +245,77 @@ void record_camera_setup(int height)
   }
 }
 
-/* Records rec_duration seconds of H264 video into <timestamp>.mp4 using the
- * double-buffered capture already started by record_camera_setup().  Opens the
- * MP4, runs the capture->encode loop, finalizes the file, and stops the capture.
- * Called in RECORDING, right after RECORD_MODE_WARMUP.
- *   height : must match the value passed to record_camera_setup(). */
-void record_h264_run(const char *timestamp, int height, int rec_duration)
+/* ==========================================================================
+ * H264 RAM store
+ *
+ * The SD card is kept powered off for the whole capture (VIDEO_CAPTURE runs
+ * before SD_CARD_INIT): record_h264_to_ram() cannot call REC_Start/
+ * REC_PushFrame directly (they need FatFS/the SD mounted). Instead it
+ * accumulates encoded access units into this dedicated PSRAM store; once
+ * SD_CARD_INIT has run, record_h264_flush_to_sd() replays them through the
+ * existing REC_Start/REC_PushFrame/REC_Stop muxer.
+ *
+ * Deliberately a SEPARATE buffer from buffer_full_frame's tail (the ring
+ * REC_Start uses) rather than reusing it: REC_PushFrame's own ring-offset
+ * bookkeeping (during flush) is independent of this store's, so pointing it
+ * at the same memory could make the internal memcpy's src/dst ranges
+ * overlap without matching exactly -- undefined behavior. Two buffers keeps
+ * this trivially safe.
+ * ========================================================================== */
+#define H264_RAM_STORE_SIZE (8u * 1024u * 1024u) /* full rec_duration clip; ~200 frames for 8s @ 25fps 1080p */
+#define H264_RAM_MAX_FRAMES 512u                 /* generous vs ~200 frames for the case above */
+
+typedef struct {
+  uint32_t offset;
+  uint32_t len;
+  uint32_t duration; /* 1/90000 s, 0 = nominal 1/fps (see REC_PushFrame) */
+} h264_frame_desc_t;
+
+static uint8_t h264_ram_store[H264_RAM_STORE_SIZE] ALIGN_32 IN_PSRAM;
+static h264_frame_desc_t h264_ram_frames[H264_RAM_MAX_FRAMES];
+static uint32_t h264_ram_frame_count;
+static uint32_t h264_ram_used;
+static int h264_ram_width, h264_ram_height;
+
+/* Captures+encodes rec_duration seconds of H264 video into the RAM store
+ * above (buffer_full_frame + setup_record_h264()'s double-buffered
+ * capture; no SD access). Called in VIDEO_CAPTURE, right after
+ * setup_record_h264(). Stops early (logged) if the store fills up before
+ * rec_duration elapses.
+ *   height : must match the value passed to setup_record_h264().
+ * Returns the number of frames captured (> 0), or -1 if none were. */
+int record_h264_to_ram(int height, int rec_duration)
 {
-  int width = height * 4 / 3;                                 /* 4:3 */
-  uint32_t frame_bytes = (uint32_t)width * (uint32_t)height * 2u; /* RGB565 */
-  char fname[40];
+  int width = height * 4 / 3; /* 4:3 */
+  uint32_t start_tick, last_frame_tick, frame_count = 0, encode_ok_count = 0;
 
-  snprintf(fname, sizeof(fname), "%s.mp4", timestamp);
+  h264_ram_frame_count = 0;
+  h264_ram_used        = 0;
+  h264_ram_width        = width;
+  h264_ram_height       = height;
 
-  /* Open the MP4 file and start the muxer.  Ring buffer lives in the unused
-   * part of buffer_full_frame (after the 2 capture frames) -> several seconds
-   * of encoded video, absorbing SD latency spikes. */
-  if (REC_Start(width, height, H264_FPS,
-                buffer_full_frame + 2 * frame_bytes,
-                MAX_CAPTURE_FRAME_SIZE - 2 * frame_bytes,
-                fname) != 0) {
-    printf("[REC] record start failed, recording aborted\r\n");
-    /* Stop the capture started by record_camera_setup(). */
-    h264_streaming = 0;
-    CLEAR_BIT(hcamera_dcmipp.Instance->P1PPCR, DCMIPP_P1PPCR_DBM);
-    warmup_done = 0;
-    return;
-  }
+  printf("[REC] capturing %d sec @ %d fps to RAM...\r\n", rec_duration, H264_FPS);
 
-  printf("[REC] recording started (%d sec @ %d fps)...\r\n", rec_duration, H264_FPS);
-
-  /* Record for rec_duration seconds */
-  uint32_t start_tick = HAL_GetTick();
-  uint32_t last_frame_tick = start_tick;
-  uint32_t frame_count = 0;
-  uint32_t encode_ok_count = 0;
-
-  printf("[REC] video started %d ms after movement detection\r\n", (int)(start_tick-actual_ticks));
+  start_tick = HAL_GetTick();
+  last_frame_tick = start_tick;
+  printf("[REC] video capture started %d ms after movement detection\r\n", (int)(start_tick - actual_ticks));
 
   while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {
     if (!h264_frame_ready) {
       vTaskDelay(pdMS_TO_TICKS(1));
       continue;
     }
-    h264_frame_ready = 0;
+    h264_frame_ready = false;
     frame_count++;
 
     /* First frame is always IDR+SPS/PPS. */
     {
-      int force_idr = (frame_count == 1) || force_intra;
+      bool force_idr = (frame_count == 1) || force_intra;
       /* snapshot: the completed buffer (the other one is being written) */
       uint8_t *p_frame = h264_ready_buf;
       size_t len = h264_encode_frame(p_frame, force_idr);
-      force_intra = 0;
+      force_intra = false;
       if (len > 0) {
-        encode_ok_count++;
         /* Real measured frame duration (variable frame rate): keeps the
          * MP4 duration equal to wall-clock time even if the sensor is not
          * exactly at 30 fps or if frames are skipped/dropped. */
@@ -294,19 +324,30 @@ void record_h264_run(const char *timestamp, int height, int rec_duration)
         last_frame_tick = now;
         if (dur90k == 0u || dur90k > 90000u)
           dur90k = 0u; /* aberrant delta -> fall back to nominal 1/fps */
-        /* Queue for the SD writer task.  If the ring is full (SD latency
-         * spike), the frame is dropped: force an IDR so the decoder can
-         * resynchronize on the next frame. */
-        if (REC_PushFrame(h264_venc_out, len, dur90k) != 0)
-          force_intra = 1;
+
+        if (h264_ram_frame_count >= H264_RAM_MAX_FRAMES || h264_ram_used + len > H264_RAM_STORE_SIZE) {
+          printf("[REC] RAM store full (%lu frames, %lu KB), stopping capture early\r\n",
+                 (unsigned long)h264_ram_frame_count, (unsigned long)h264_ram_used / 1024);
+          break;
+        }
+
+        memcpy(&h264_ram_store[h264_ram_used], h264_venc_out, len);
+        h264_ram_frames[h264_ram_frame_count].offset   = h264_ram_used;
+        h264_ram_frames[h264_ram_frame_count].len      = (uint32_t)len;
+        h264_ram_frames[h264_ram_frame_count].duration = dur90k;
+        h264_ram_frame_count++;
+        h264_ram_used += (uint32_t)len;
+        encode_ok_count++;
       }
     }
   }
-  printf("[REC] recording states: frames=%lu encOK=%lu dcmippErr=%lu\r\n",
-         frame_count, encode_ok_count, (unsigned long)dcmipp_err_count);
+  printf("[REC] capture done: frames=%lu encOK=%lu stored=%lu (%lu KB) dcmippErr=%lu\r\n",
+         (unsigned long)frame_count, (unsigned long)encode_ok_count,
+         (unsigned long)h264_ram_frame_count, (unsigned long)h264_ram_used / 1024,
+         (unsigned long)dcmipp_err_count);
 
-  /* Stop the capture->encode pipeline */
-  h264_streaming = 0;
+  /* Stop the capture->encode pipeline started by setup_record_h264(). */
+  h264_streaming = false;
 
   /* Disable hardware double-buffer mode (never cleared by the HAL) so the
    * next single-buffer session (config/detect warmup) starts clean. */
@@ -317,16 +358,61 @@ void record_h264_run(const char *timestamp, int height, int rec_duration)
    * SPS/PPS for the next file.
    * NOTE: H264EncRelease must NOT be called — it crashes on this target.
    *       H264EncStrmEnd is safe and is the correct way to close a stream. */
+  printf("[REC] ending encoder session...\r\n");
   ENC_EndSession(h264_venc_out, H264_VENC_OUT_SIZE);
+  printf("[REC] encoder session ended\r\n");
 
-  /* Flush pending frames and finalize the MP4 (writes the moov index).
-   * Blocks until the SD writer task is done. */
-  if (REC_Stop() == 0)
-    printf("[REC] mp4 file finalized ok\r\n");
+  /* Re-enter current mode from scratch */
+  warmup_done = false;
+
+  return (h264_ram_frame_count > 0) ? (int)h264_ram_frame_count : -1;
+}
+
+/* Muxes the RAM store filled by record_h264_to_ram() into fname on
+ * the SD card, through the existing REC_Start/REC_PushFrame/REC_Stop
+ * FreeRTOS SD writer task. Called in MULTIMEDIA_STORAGE, once SD_CARD_INIT
+ * has succeeded. Unlike the live-recording path, there is no "next real-time
+ * frame" to force an IDR onto if the SD writer's ring is briefly full, so
+ * REC_PushFrame is retried (bounded) instead of dropping the frame -- a drop
+ * here would silently corrupt the saved file.
+ * Returns 0 on success. */
+int record_h264_flush_to_sd(const char *fname)
+{
+  uint32_t frame_bytes = (uint32_t)h264_ram_width * (uint32_t)h264_ram_height * 2u; /* RGB565 */
+  int ret;
+
+  if (h264_ram_frame_count == 0)
+    return -1;
+
+  /* Ring buffer lives in the unused part of buffer_full_frame (after the 2
+   * capture frames); capture is long done at this point so it is free. */
+  if (REC_Start(h264_ram_width, h264_ram_height, H264_FPS,
+                buffer_full_frame + 2 * frame_bytes,
+                MAX_CAPTURE_FRAME_SIZE - 2 * frame_bytes,
+                fname) != 0) {
+    printf("[REC] record start failed, flush aborted\r\n");
+    return -1;
+  }
+
+  for (uint32_t i = 0; i < h264_ram_frame_count; i++) {
+    h264_frame_desc_t *d = &h264_ram_frames[i];
+    uint32_t retries = 0;
+
+    while (REC_PushFrame(&h264_ram_store[d->offset], d->len, d->duration) != 0) {
+      if (++retries > 5000u) { /* ~5 s: the SD writer task should never stall this long */
+        printf("[REC] flush: ring stayed full, frame %lu dropped\r\n", (unsigned long)i);
+        break;
+      }
+      vTaskDelay(pdMS_TO_TICKS(1));
+    }
+  }
+
+  ret = REC_Stop();
+  if (ret == 0)
+    printf("[REC] mp4 file finalized ok (%s)\r\n", fname);
   else
     printf("[REC] mp4 finalize failed\r\n");
 
-  /* Re-enter current mode from scratch */
-  warmup_done = 0;
+  return ret;
 }
 

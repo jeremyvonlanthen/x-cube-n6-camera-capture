@@ -27,7 +27,7 @@
  *                 config preview and detect warmup). */
 void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
 {
-	static int camera_initialized = 0;
+	static bool camera_initialized = false;
 
   CAM_conf_t cam_conf = { 0 };
   uint8_t two_pipes = (output_format == DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
@@ -42,10 +42,10 @@ void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
   CAM_Init(&cam_conf, two_pipes);
 
   /* Required on re-warmup: the frame event callback only increments
-   * warmup_frames while warmup_done == 0.  Without this reset, the second
-   * warmup (DETECT_MODE_WARMUP) waits forever since warmup_done is still 1
-   * from the previous mode. */
-  warmup_done = 0;
+   * warmup_frames while warmup_done is false.  Without this reset, the
+   * second warmup (DETECT_MODE_WARMUP) waits forever since warmup_done is
+   * still true from the previous mode. */
+  warmup_done = false;
   warmup_frames = 0;
 
   CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_CONTINUOUS, 0);
@@ -56,30 +56,30 @@ void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
   HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE1, DCMIPP_VIRTUAL_CHANNEL0);
   vTaskDelay(pdMS_TO_TICKS(50));
 
-  snapshot_in_progress = 1;
-  frame_ready = 0;
+  snapshot_in_progress = true;
+  frame_ready = false;
   CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
   {
     uint32_t discard_start = HAL_GetTick();
     while (!frame_ready && HAL_GetTick() - discard_start < 1000)
       vTaskDelay(pdMS_TO_TICKS(1));
   }
-  snapshot_in_progress = 0;
+  snapshot_in_progress = false;
 
   if (two_pipes) {
     HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE2, DCMIPP_VIRTUAL_CHANNEL0);
     vTaskDelay(pdMS_TO_TICKS(50));
   }
-  warmup_done = 1;
-  camera_initialized = 1;
+  warmup_done = true;
+  camera_initialized = true;
 }
 
 /* One full-sensor YUV422 snapshot (config mode), JPEG-encoded and sent to the
  * GUI over UART (kept at full resolution for accurate crop-region framing) */
 int capture_yuv(void)
 {
-  snapshot_in_progress = 1;
-  frame_ready = 0;
+  snapshot_in_progress = true;
+  frame_ready = false;
   CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
 
   uint32_t start = HAL_GetTick();
@@ -88,7 +88,7 @@ int capture_yuv(void)
       break;
     vTaskDelay(pdMS_TO_TICKS(1));
   }
-  snapshot_in_progress = 0;
+  snapshot_in_progress = false;
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
 

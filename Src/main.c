@@ -17,6 +17,7 @@
  */
 
 #include <assert.h>
+#include <stdbool.h>
 
 #include "app.h"
 #include "app_config.h"
@@ -48,7 +49,7 @@ UART_HandleTypeDef huart1;
 /* RTC (LSI). Configured by RTC_Config below; the rtc_* runtime helpers
  * live in app.c and use these two symbols. */
 RTC_HandleTypeDef hrtc;
-volatile int rtc_ready = 0;   /* 1 once HAL_RTC_Init succeeded */
+volatile bool rtc_ready = false;   /* true once HAL_RTC_Init succeeded */
 
 /* H264 encoder call chain requires significantly more stack than the default.
  * The example project uses 2×configMINIMAL_STACK_SIZE for encode threads;
@@ -311,10 +312,10 @@ static void CN11_Inputs_Config(void)
   gpio_init.Pull  = GPIO_PULLUP;
   gpio_init.Speed = GPIO_SPEED_FREQ_LOW;
 
-  gpio_init.Pin = GPIO_PIN_0; /* PD0 -- CN11 D2 -- mode diurne*/
+  gpio_init.Pin = GPIO_PIN_0; /* PD0 -- CN11 D2 -- 24h mode*/
   HAL_GPIO_Init(GPIOD, &gpio_init);
 
-  gpio_init.Pin = GPIO_PIN_5; /* PH5 -- CN11 D4 -- mode 24h*/
+  gpio_init.Pin = GPIO_PIN_5; /* PH5 -- CN11 D4 -- diurnal mode*/
   HAL_GPIO_Init(GPIOH, &gpio_init);
 }
 
@@ -370,7 +371,7 @@ static void RTC_Config(void)
     return;
   }
 
-  rtc_ready = 1;
+  rtc_ready = true;
 }
 
 static int main_freertos()
@@ -422,12 +423,6 @@ static void main_thread_fct(void *arg)
   NOR_Init.TransferRate = BSP_XSPI_NOR_DTR_TRANSFER;
   BSP_XSPI_NOR_Init(0, &NOR_Init);
   BSP_XSPI_NOR_EnableMemoryMappedMode(0);
-
-  ret = BSP_LED_Init(LED_GREEN);
-  assert(ret == BSP_ERROR_NONE);
-
-  ret = BSP_LED_Init(LED_RED);
-  assert(ret == BSP_ERROR_NONE);
 
   ret = BSP_PB_Init(BUTTON_USER1, BUTTON_MODE_EXTI);
   assert(ret == BSP_ERROR_NONE);
