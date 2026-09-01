@@ -22,6 +22,7 @@
 #include "app.h"
 #include "app_config.h"
 #include "app_fuseprogramming.h"
+#include "app_rtc.h"
 #include "app_sleep.h"
 #include "main.h"
 #include "npu_cache.h"
@@ -46,11 +47,6 @@ extern int __uncached_bss_end__;
 
 UART_HandleTypeDef huart1;
 
-/* RTC (LSI). Configured by RTC_Config below; the rtc_* runtime helpers
- * live in app.c and use these two symbols. */
-RTC_HandleTypeDef hrtc;
-volatile bool rtc_ready = false;   /* true once HAL_RTC_Init succeeded */
-
 /* H264 encoder call chain requires significantly more stack than the default.
  * The example project uses 2×configMINIMAL_STACK_SIZE for encode threads;
  * use 4× here because stream_h264_usb also carries the full app frame. */
@@ -62,7 +58,7 @@ void SystemClock_Config(void);
 static void Security_Config();
 static void IAC_Config();
 static void CONSOLE_Config(void);
-static void RTC_Config(void);
+static void LSI_Config(void);
 static void CN11_Inputs_Config(void);
 static void Setup_Mpu(void);
 static int main_freertos(void);
@@ -319,20 +315,13 @@ static void CN11_Inputs_Config(void)
   HAL_GPIO_Init(GPIOH, &gpio_init);
 }
 
-/* ==========================================================================
- * RTC (timestamped file names, clocked on the internal LSI)
- * ========================================================================== */
-
-/* Initializes the RTC on the internal LSI (~32 kHz: no external crystal
- * required).  Non-fatal on failure: rtc_ready stays 0 and rtc_make_timestamp
- * falls back to a HAL_GetTick-based name.  The date/time is pushed by the GUI
- * (command 'T'); until then the calendar counts from its power-on default. */
-static void RTC_Config(void)
+/* Enables the internal LSI (~32 kHz RC oscillator). Kept for app_sleep's
+ * LPTIM1 (RCC_LPTIM1CLKSOURCE_LSI in app_sleep_init) -- the calendar itself
+ * is now handled by the external DS3231 RTC module over I2C (app_rtc.c),
+ * not by this MCU's internal RTC peripheral. */
+static void LSI_Config(void)
 {
   RCC_OscInitTypeDef osc = { 0 };
-  RCC_PeriphCLKInitTypeDef pclk = { 0 };
-
-  HAL_PWR_EnableBkUpAccess();
 
   osc.OscillatorType = RCC_OSCILLATORTYPE_LSI;
   osc.LSIState       = RCC_LSI_ON;
@@ -340,38 +329,8 @@ static void RTC_Config(void)
   osc.PLL2.PLLState  = RCC_PLL_NONE;
   osc.PLL3.PLLState  = RCC_PLL_NONE;
   osc.PLL4.PLLState  = RCC_PLL_NONE;
-  if (HAL_RCC_OscConfig(&osc) != HAL_OK) {
-    printf("[RTC] LSI enable failed\r\n");
-    return;
-  }
-
-  pclk.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-  pclk.RTCClockSelection    = RCC_RTCCLKSOURCE_LSI;
-  if (HAL_RCCEx_PeriphCLKConfig(&pclk) != HAL_OK) {
-    printf("[RTC] clock select failed\r\n");
-    return;
-  }
-
-  __HAL_RCC_RTC_ENABLE();
-  __HAL_RCC_RTCAPB_CLK_ENABLE();
-
-  /* LSI ~32 kHz -> (127+1) * (249+1) = 32000 for a 1 Hz calendar tick */
-  hrtc.Instance            = RTC;
-  hrtc.Init.HourFormat     = RTC_HOURFORMAT_24;
-  hrtc.Init.AsynchPrediv   = 127;
-  hrtc.Init.SynchPrediv    = 249;
-  hrtc.Init.OutPut         = RTC_OUTPUT_DISABLE;
-  hrtc.Init.OutPutRemap    = RTC_OUTPUT_REMAP_NONE;
-  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-  hrtc.Init.OutPutType     = RTC_OUTPUT_TYPE_OPENDRAIN;
-  hrtc.Init.OutPutPullUp   = RTC_OUTPUT_PULLUP_NONE;
-  hrtc.Init.BinMode        = RTC_BINARY_NONE;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK) {
-    printf("[RTC] HAL_RTC_Init failed\r\n");
-    return;
-  }
-
-  rtc_ready = true;
+  if (HAL_RCC_OscConfig(&osc) != HAL_OK)
+    printf("[main] LSI enable failed\r\n");
 }
 
 static int main_freertos()
@@ -464,7 +423,8 @@ static void main_thread_fct(void *arg)
   RAMCFG_SRAM5_AXI_S->CR &= ~(1UL << 20);
   RAMCFG_SRAM6_AXI_S->CR &= ~(1UL << 20);
 
-  RTC_Config();
+  LSI_Config();
+  rtc_init();
   app_sleep_init();
 
   app_run();

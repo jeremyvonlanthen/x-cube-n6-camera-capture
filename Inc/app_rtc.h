@@ -3,9 +3,9 @@
  * @file    app_rtc.h
  * @brief   RTC runtime helpers (timestamped file names).
  *
- * The RTC peripheral itself is configured in main.c (RTC_Config); the handle
- * `hrtc` and the `rtc_ready` flag are defined there.  These helpers only read
- * and set the calendar.
+ * Backed by an external DS3231 I2C RTC module (battery-backed, keeps time
+ * across power loss), driven over I2C1 (shared with the camera sensor) --
+ * see rtc_init() in app_rtc.c.
  ******************************************************************************
  */
 #ifndef APP_RTC_H
@@ -13,6 +13,12 @@
 
 #include <stddef.h>
 #include <stdint.h>
+
+/* Probes the external RTC module on I2C1 and brings the bus up. Non-fatal on
+ * failure: rtc_ready stays false and rtc_make_timestamp falls back to a
+ * HAL_GetTick-based name. Call once at startup, before rtc_set_datetime /
+ * rtc_make_timestamp. */
+void rtc_init(void);
 
 /* Sets the RTC calendar from a 6-byte payload (year-2000, month, day, hour,
  * minute, second) received from the GUI. */

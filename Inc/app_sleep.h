@@ -10,7 +10,7 @@
 #include <stdint.h>
 
 /* One-time init: must be called once at boot, after the LSI oscillator is
- * already enabled (RTC_Config() in main.c does this) */
+ * already enabled (LSI_Config() in main.c does this) */
 void app_sleep_init(void);
 void sleep_short_period(uint32_t time_ms);
 

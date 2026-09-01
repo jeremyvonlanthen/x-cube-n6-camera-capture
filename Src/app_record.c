@@ -33,7 +33,7 @@
  * measured ~15.7 Mbit/s on hardware, which didn't fit an 8-second clip in
  * PSRAM (see H264_RAM_STORE_SIZE below). 960x720/15fps measures ~4.15 Mbit/s,
  * comfortably fitting a full 15-second clip with margin to spare. */
-#define H264_FPS              25
+#define H264_FPS              20
 #define H264_VENC_OUT_SIZE    (1024 * 1024)  /* 1 MB: holds a full 1080p keyframe */
 #define H264_AE_WARMUP_FRAMES 10
 #define H264_MAX_HEIGHT       1080     /* do not exceed: pools sized for this */
@@ -110,7 +110,6 @@ int record_snapshot_to_ram(int height)
     int32_t je = 0, jg = 0;
     CMW_CAMERA_GetExposure(&je);
     CMW_CAMERA_GetGain(&jg);
-    printf("[REC] jpeg AE: exp=%ld gain=%ld\r\n", (long)je, (long)jg);
   }
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
@@ -244,8 +243,6 @@ void setup_record_h264(int height)
     int32_t conv_exp = 0, conv_gain = 0;
     CMW_CAMERA_GetExposure(&conv_exp);
     CMW_CAMERA_GetGain(&conv_gain);
-    printf("[REC] video AE: seed exp=%ld gain=%ld -> converged exp=%ld gain=%ld\r\n",
-           (long)seed_exp, (long)seed_gain, (long)conv_exp, (long)conv_gain);
   }
 }
 
@@ -303,11 +300,11 @@ int record_h264_to_ram(int height, int rec_duration)
   h264_ram_width        = width;
   h264_ram_height       = height;
 
-  printf("[REC] capturing %d sec @ %d fps to RAM...\r\n", rec_duration, H264_FPS);
-
   start_tick = HAL_GetTick();
   last_frame_tick = start_tick;
+
   printf("[REC] video capture started %d ms after movement detection\r\n", (int)(start_tick - actual_ticks));
+  printf("[REC] capturing %d sec @ %d fps @ %dp to RAM...\r\n", rec_duration, H264_FPS, height);
 
   while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {
     if (!h264_frame_ready) {
