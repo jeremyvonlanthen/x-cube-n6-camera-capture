@@ -184,8 +184,7 @@ void app_run(void)
 		mode = _DIURNAL;
 		state = SD_CARD_INIT;
 	}
-	else
-		printf("[FSM] RUNS NOW IN CONFIG MODE (until system restart)\r\n");
+	else printf("[FSM] RUNS NOW IN CONFIG MODE (until system restart)\r\n");
 
 	while(1)
 	{
@@ -253,14 +252,13 @@ void app_run(void)
 			if (CONFIG_FLASH_Save(&config_py) == 0)
 				printf("[FSM] pipes config saved to flash\n"
 						"[FSM] now ready to execute diurnal or 24h mode\r\n");
-			else
-				printf("[FSM] pipes config flash save FAILED\r\n");
+			else printf("[FSM] pipes config flash save FAILED\r\n");
 
 			config_already_saved = true;
 			break;
 
 		case SD_CARD_INIT:
-			if(SD_init()){
+			if(SD_init(sd_reinit_for_storage)){
 				if(sd_reinit_for_storage){
 					sd_reinit_for_storage = false;
 					state = MULTIMEDIA_STORAGE;
@@ -360,12 +358,11 @@ void app_run(void)
 
 			if(is_video_to_record){
 				snprintf(path, sizeof(path), "%s/video.mp4", timestamp);
-				if (record_h264_flush_to_sd(path) == 0) printf("[FSM] video saved to %s\r\n", path);
-				else printf("[FSM] video save FAILED\r\n");
+				if(record_h264_flush_to_sd(path) != 0) printf("[FSM] video save FAILED\r\n");
 			}
 			else{
 				snprintf(path, sizeof(path), "%s/image.jpeg", timestamp);
-				if (record_snapshot_flush_to_sd(path) == 0) printf("[FSM] photo saved to %s\r\n", path);
+				if(record_snapshot_flush_to_sd(path) == 0) printf("[FSM] photo saved to %s\r\n", path);
 				else printf("[FSM] photo save FAILED\r\n");
 			}
 

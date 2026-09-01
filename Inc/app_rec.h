@@ -11,19 +11,24 @@
 #ifndef APP_REC_H
 #define APP_REC_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 /* One-time peripheral init: initializes the SD recorder (REC_Init: SD card +
  * FAT32 mount + FreeRTOS SD writer task) and logs the failure reason on the
  * various error codes REC_Init can return.  Returns 1 on success, 0 on
- * failure (caller should retry after a short delay). */
-int SD_init(void);
+ * failure (caller should retry after a short delay).
+ *   quiet : true for a storage re-init (SD was just powered back up to
+ *           flush a captured video/photo) -- collapses the mount/free-space
+ *           detail into a single "re-init" line instead of repeating it. */
+int SD_init(bool quiet);
 
 /* Called once at startup (before any REC_Start).  Configures the SDMMC2
  * kernel clock, initializes the BSP SD, mounts the FAT32 volume and creates
- * the SD writer task.  Returns 0 on success. */
-int REC_Init(void);
+ * the SD writer task.  Returns 0 on success.
+ *   quiet : suppresses the FAT-type / free-space detail lines (see SD_init). */
+int REC_Init(bool quiet);
 
 /* Unmounts the FAT32 volume and powers down the SD peripheral (HAL SD
  * de-init, SDMMC2 clock, GPIOC/E pins) for current-consumption measurement.

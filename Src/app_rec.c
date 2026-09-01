@@ -409,12 +409,14 @@ static void rec_task_fct(void *arg)
 /* ------------------------------------------------------------------------ */
 /* Public API                                                                */
 /* ------------------------------------------------------------------------ */
-int SD_init(void)
+int SD_init(bool quiet)
 {
-  int rec_ready = REC_Init();
+  int rec_ready = REC_Init(quiet);
 
   switch (rec_ready) {
   case 0:
+    if (quiet)
+      printf("[uSD] uSD successfully re-init\r\n");
     break;
   case -1:
     printf("[uSD] required formatting failed (FAT32)\r\n");
@@ -441,7 +443,7 @@ int SD_init(void)
  * BSP_SD_IsDetected() in MOVEMENT_DETECTION) needs that reset. */
 static volatile bool sd_was_cleanly_powered_down = false;
 
-int REC_Init(void)
+int REC_Init(bool quiet)
 {
   static bool rtos_done = false;   /* FreeRTOS objects created only once */
   RCC_PeriphCLKInitTypeDef clk = { 0 };
@@ -479,11 +481,11 @@ int REC_Init(void)
   res = f_mount(&fs, "", 1);
   if (res != FR_OK) return -1;
 
-  printf("[uSD] uSD mounted and detected (FAT type %d)\r\n", fs.fs_type);
+  if (!quiet) {
+    printf("[uSD] uSD mounted and detected (FAT type %d)\r\n", fs.fs_type);
 
-  /* Total and free space (f_getfree scans the FAT: can take 100s of ms).
-   * 512 bytes/sector => 2048 sectors = 1 MB. */
-  {
+    /* Total and free space (f_getfree scans the FAT: can take 100s of ms).
+     * 512 bytes/sector => 2048 sectors = 1 MB. */
     FATFS *pfs;
     DWORD  fre_clust;
     if (f_getfree("", &fre_clust, &pfs) == FR_OK) {

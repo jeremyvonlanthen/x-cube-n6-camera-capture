@@ -106,6 +106,16 @@ int record_snapshot_to_ram(int height)
   }
   snapshot_in_progress = false;
 
+  /* Let the CSI/D-PHY link settle after this PIPE1 snapshot before the
+   * caller potentially tears the camera down (VIDEO_CAPTURE -> setup_record_h264()
+   * -> CAM_Deinit()+CAM_Init() right after this call, with no other delay in
+   * between). camera_warmup() always inserts this same 50 ms settle after
+   * its own PIPE1 stop; without it here, a video recording that follows a
+   * detection cycle (the 2nd+ one in a session) can hit a DCMIPP D-PHY
+   * relock error that leaves hcamera_dcmipp.State != READY, failing the
+   * "ret == HAL_OK" assert in DCMIPP_PipeInitCapture (app_cam.c). */
+  vTaskDelay(pdMS_TO_TICKS(50));
+
   {
     int32_t je = 0, jg = 0;
     CMW_CAMERA_GetExposure(&je);
@@ -303,7 +313,7 @@ int record_h264_to_ram(int height, int rec_duration)
   start_tick = HAL_GetTick();
   last_frame_tick = start_tick;
 
-  printf("[REC] video capture started %d ms after movement detection\r\n", (int)(start_tick - actual_ticks));
+  printf("[REC] video started %d ms after movement detection\r\n", (int)(start_tick - actual_ticks));
   printf("[REC] capturing %d sec @ %d fps @ %dp to RAM...\r\n", rec_duration, H264_FPS, height);
 
   while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {
@@ -347,13 +357,20 @@ int record_h264_to_ram(int height, int rec_duration)
       }
     }
   }
-  printf("[REC] capture done: frames=%lu encOK=%lu stored=%lu (%lu KB) dcmippErr=%lu\r\n",
-         (unsigned long)frame_count, (unsigned long)encode_ok_count,
-         (unsigned long)h264_ram_frame_count, (unsigned long)h264_ram_used / 1024,
-         (unsigned long)dcmipp_err_count);
+  unsigned long encoding = 100*encode_ok_count/frame_count;
+  printf("[REC] capture %s: %.2f%% encoding\r\n", encoding==100. ? "sucess" : "error", encoding);
 
   /* Stop the capture->encode pipeline started by setup_record_h264(). */
   h264_streaming = false;
+
+  /* Actually stop PIPE1's continuous capture (mirrors camera_warmup()'s
+   * post-continuous-phase stop). Without this, PIPE1 is still running when
+   * the next camera_warmup() calls CAM_Deinit() to tear it down -- harmless
+   * the first time (nothing was running yet to deinit), but the second
+   * recording's setup_record_h264() -> CMW_CAMERA_SetPipeConfig(PIPE1, ...)
+   * then fails its "ret == HAL_OK" assert in DCMIPP_PipeInitCapture. */
+  HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE1, DCMIPP_VIRTUAL_CHANNEL0);
+  vTaskDelay(pdMS_TO_TICKS(50));
 
   /* Disable hardware double-buffer mode (never cleared by the HAL) so the
    * next single-buffer session (config/detect warmup) starts clean. */
@@ -412,9 +429,7 @@ int record_h264_flush_to_sd(const char *fname)
   }
 
   ret = REC_Stop();
-  if (ret == 0)
-    printf("[REC] mp4 file finalized ok (%s)\r\n", fname);
-  else
+  if (ret != 0)
     printf("[REC] mp4 finalize failed\r\n");
 
   return ret;

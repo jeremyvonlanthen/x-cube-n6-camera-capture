@@ -576,8 +576,17 @@ int32_t CMW_CAMERA_DeInit(void)
 
   /* Update DCMIPPInit counter */
   is_camera_init--;
-  is_camera_started--;
-  is_pipe1_2_shared--;
+
+  /* is_camera_started/is_pipe1_2_shared are only conditionally incremented
+   * (by CMW_CAMERA_Start() and by SetPipe()'s PIPE2 CSI-share branch), but
+   * this DeInit always tears down the whole DCMIPP+sensor session -- so
+   * decrementing them unconditionally drifts them negative once a caller
+   * DeInits more sessions than incremented one of them (e.g. this app's
+   * camera_warmup()/setup_record_h264() pattern: every DeInit+Init cycle
+   * decrements is_pipe1_2_shared, but only two-pipe inits increment it).
+   * A full DeInit always leaves both at 0; reset instead of decrement. */
+  is_camera_started = 0;
+  is_pipe1_2_shared = 0;
 
   /* Return CMW status */
   ret = CMW_ERROR_NONE;

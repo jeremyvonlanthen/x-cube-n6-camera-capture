@@ -926,7 +926,6 @@ class MainWindow(QMainWindow):
         root.addWidget(right, stretch=1)
 
         self._log("application started")
-        self._log("<b>NOTE: IF NECESSARY, PRESS <i>USER1</i> BUTTON TO RESTART THE CONFIG (SD initialization excluded)</b>")
         self._log("looking for dev. board (VID 0x0483)…")
 
     # ── Journal ───────────────────────────────────────────────────────────────

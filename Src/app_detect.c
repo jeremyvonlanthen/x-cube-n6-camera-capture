@@ -377,7 +377,7 @@ bool DETECT_ProcessFrame(void)
 {
   bool is_detect = false;
 
-  if (capture_detect_frame() != 0)
+  if(capture_detect_frame() != 0)
     return false;
 
   pixel_detection(buffer_pipe1_capture, frame1_pipe1, frame2_pipe1, detect_mvt_pipe1, detect_tmp_pipe1,
@@ -388,7 +388,7 @@ bool DETECT_ProcessFrame(void)
                    detect_pipe2, mean_pipe2, std_pipe2, height_pipe2, width_pipe2, 2, &is_detect, &nb_capture);
   stat_adjustment(buffer_pipe2_capture, detect_pipe2, mean_pipe2, var_pipe2, std_pipe2, height_pipe2, width_pipe2);
 
-  if (nb_capture < 34) nb_capture++;
+  if(nb_capture < 34) nb_capture++;
 
   return is_detect;
 }
