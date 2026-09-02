@@ -47,6 +47,13 @@
 #define DS3231_STATUS_OSF     0x80U /* Oscillator Stop Flag: calendar was lost */
 
 static volatile bool rtc_ready = false;
+/* False from boot until either the OSF check at init found the calendar
+ * already valid, or rtc_set_datetime() has written a fresh time. Gates
+ * rtc_make_timestamp()'s fallback -- without this, a recording triggered
+ * before the GUI sends 'T' (calendar lost: dead battery, first power-up)
+ * would silently timestamp itself from the stale/garbage registers instead
+ * of falling back to the tick-based name. */
+static volatile bool rtc_time_valid = false;
 
 static uint8_t bin2bcd(uint8_t v)
 {
@@ -75,7 +82,9 @@ void rtc_init(void)
   rtc_ready = true;
 
   if (BSP_I2C1_ReadReg(DS3231_I2C_ADDR, DS3231_REG_STATUS, &status, 1) == BSP_ERROR_NONE
-      && (status & DS3231_STATUS_OSF)) {
+      && !(status & DS3231_STATUS_OSF)) {
+    rtc_time_valid = true;
+  } else {
     printf("[RTC] oscillator stop flag set: calendar was lost (dead/missing "
            "backup battery, or first power-up) -- waiting for 'T' from the GUI\r\n");
   }
@@ -108,6 +117,7 @@ void rtc_set_datetime(const uint8_t dt[6])
     status &= (uint8_t)~DS3231_STATUS_OSF;
     BSP_I2C1_WriteReg(DS3231_I2C_ADDR, DS3231_REG_STATUS, &status, 1);
   }
+  rtc_time_valid = true;
 
   printf("[RTC] date and time set to 20%02u-%02u-%02u %02u:%02u:%02u\r\n",
          dt[0], dt[1], dt[2], dt[3], dt[4], dt[5]);
@@ -117,7 +127,7 @@ void rtc_make_timestamp(char *buf, size_t n)
 {
   uint8_t reg[7];
 
-  if (!rtc_ready
+  if (!rtc_ready || !rtc_time_valid
       || BSP_I2C1_ReadReg(DS3231_I2C_ADDR, DS3231_REG_SECONDS, reg, sizeof(reg)) != BSP_ERROR_NONE) {
     snprintf(buf, n, "REC_%08lu", (unsigned long)HAL_GetTick());
     return;

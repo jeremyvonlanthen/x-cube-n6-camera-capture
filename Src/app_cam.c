@@ -17,11 +17,17 @@
  */
 #include <assert.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include "cmw_camera.h"
 #include "app_cam.h"
 #include "app_config.h"
 #include "stm32n6xx.h"
+#include "stm32n6xx_hal.h"
 #include "utils.h"
+
+/* CAM_Init() retry budget: see the comment above its DCMIPP_PipeInitCapture()
+ * retry loop. */
+#define CAM_INIT_MAX_ATTEMPTS 5
 
 /* Define sensor orientation */
 #if CAMERA_SELFY == 1
@@ -128,7 +134,15 @@ static void CAM_EnableYuv(uint32_t Pipe)
   assert(ret == HAL_OK);
 }
 
-static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int sensor_height, CAM_conf_t *conf, uint8_t two_pipes)
+/* Returns 0 on success, -1 if either pipe's HAL config call failed (a rare
+ * DCMIPP/CSI D-PHY relock race can leave the peripheral in a state where
+ * HAL_DCMIPP_PIPE_SetConfig legitimately refuses the request -- see
+ * CAM_Init()'s retry loop, the caller that actually needs to recover from
+ * this; CAM_Pipe1_SetFormat()'s live-reconfigure callers just log it). The
+ * hw_pitch mismatch asserts are left as hard asserts: unlike a HAL call
+ * failing, a pitch mismatch here means the app miscomputed its own request,
+ * which is a real bug to fix, not a transient condition to retry. */
+static int DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int sensor_height, CAM_conf_t *conf, uint8_t two_pipes)
 {
   CMW_DCMIPP_Conf_t dcmipp_conf;
   uint32_t hw_pitch;
@@ -147,7 +161,8 @@ static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int s
 
   /*Init Pipe1*/
   ret = CMW_CAMERA_SetPipeConfig(DCMIPP_PIPE1, &dcmipp_conf, &hw_pitch);
-  assert(ret == HAL_OK);
+  if (ret != HAL_OK)
+    return -1;
   assert(hw_pitch == dcmipp_conf.output_width * dcmipp_conf.output_bpp);
 
   if(two_pipes)
@@ -157,12 +172,15 @@ static void DCMIPP_PipeInitCapture(CAM_conf_t *cam_conf, int sensor_width, int s
 
 	  /*Init Pipe2*/
 	  ret = CMW_CAMERA_SetPipeConfig(DCMIPP_PIPE2, &dcmipp_conf, &hw_pitch);
-	  assert(ret == HAL_OK);
+	  if (ret != HAL_OK)
+	    return -1;
 	  assert(hw_pitch == dcmipp_conf.output_width * dcmipp_conf.output_bpp);
   }
 
   if (cam_conf->dcmipp_output_format == DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1)
     CAM_EnableYuv(DCMIPP_PIPE1);
+
+  return 0;
 }
 
 /* Reconfigures PIPE1 ONLY (pixel packer format + full-scene downscale),
@@ -187,13 +205,15 @@ void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height,
   /* ROI = full sensor, output = out_width x out_height: CAM_InitCropConfig
    * keeps the aspect ratio and DCMIPP downscales the whole scene (not a crop).
    * Re-enables YUV conversion when needed; overrides any detect crop/downsize. */
-  DCMIPP_PipeInitCapture(&conf, sensor_width, sensor_height, &conf, 0);
+  if (DCMIPP_PipeInitCapture(&conf, sensor_width, sensor_height, &conf, 0) != 0)
+    printf("[CAM] pipe1 format reconfigure failed\r\n");
 }
 
 void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes)
 {
   CMW_CameraInit_t cam_conf;
   int ret;
+  int attempt;
 
   if (!is_sensor_valid) {
     is_sensor_valid = true;
@@ -201,18 +221,38 @@ void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes)
     assert(ret == CMW_ERROR_NONE);
   }
 
-  cam_conf.width = SENSOR_WIDTH;
-  cam_conf.height = SENSOR_HEIGHT;
-  cam_conf.fps = conf->fps;
-  cam_conf.mirror_flip = CAM_getFlipMode(sensor);
+  /* DCMIPP_PipeInitCapture() can fail on a rare DCMIPP/CSI D-PHY relock
+   * race: a link-error IRQ flips hcamera_dcmipp.State to ERROR in the
+   * narrow window between the sensor probe (inside CMW_CAMERA_Init) and
+   * the SetPipeConfig call right after, so HAL_DCMIPP_PIPE_SetConfig
+   * legitimately refuses the request. A fresh CMW_CAMERA_DeInit()+Init()
+   * cycle forces the state back to READY (the sensor probe's own
+   * CSI_PIPE_SetConfig call does this unconditionally), so retrying from
+   * scratch self-heals almost always. Bounded so a genuine, persistent
+   * hardware fault still surfaces (assert) instead of retrying forever on
+   * an unattended device. */
+  for (attempt = 1; ; attempt++) {
+    cam_conf.width = SENSOR_WIDTH;
+    cam_conf.height = SENSOR_HEIGHT;
+    cam_conf.fps = conf->fps;
+    cam_conf.mirror_flip = CAM_getFlipMode(sensor);
 
-  ret = CMW_CAMERA_Init(&cam_conf, NULL);
-  assert(ret == CMW_ERROR_NONE);
+    ret = CMW_CAMERA_Init(&cam_conf, NULL);
+    assert(ret == CMW_ERROR_NONE);
 
-  /* CMW_CAMERA_Init update width height */
-  assert(cam_conf.width);
-  assert(cam_conf.height);
-  DCMIPP_PipeInitCapture(conf, cam_conf.width, cam_conf.height, conf, two_pipes);
+    /* CMW_CAMERA_Init update width height */
+    assert(cam_conf.width);
+    assert(cam_conf.height);
+
+    if (DCMIPP_PipeInitCapture(conf, cam_conf.width, cam_conf.height, conf, two_pipes) == 0)
+      return;
+
+    printf("[CAM] pipe config failed (attempt %d/%d), reinitializing...\r\n",
+           attempt, CAM_INIT_MAX_ATTEMPTS);
+    assert(attempt < CAM_INIT_MAX_ATTEMPTS);
+    CMW_CAMERA_DeInit();
+    HAL_Delay(50);
+  }
 }
 
 void CAM_CapturePipe_Start(uint8_t *capture_pipe_dst_pipe1, uint8_t *capture_pipe_dst_pipe2, uint32_t cam_mode, uint8_t two_pipes)

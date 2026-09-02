@@ -124,47 +124,47 @@ static void last_stat_calibration(uint8_t *p_src, uint8_t *p_dst_mean, uint16_t 
             acc_odd  = vaddq_u16(acc_odd , img_odd);
 
             uint8x16_t result_mean = vdupq_n_u8(0);
-			result_mean = vshrnbq_n_u16(result_mean, acc_even, 5);
-			result_mean = vshrntq_n_u16(result_mean, acc_odd, 5);
-			vst1q_u8(&row_dst_mean[col], result_mean);
+						result_mean = vshrnbq_n_u16(result_mean, acc_even, 5);
+						result_mean = vshrntq_n_u16(result_mean, acc_odd, 5);
+						vst1q_u8(&row_dst_mean[col], result_mean);
 
-            uint32x4_t acc_var_0 = vld1q_u32(&row_acc_var[col]);
-			uint32x4_t acc_var_1 = vld1q_u32(&row_acc_var[col + 4]);
-			uint32x4_t acc_var_2 = vld1q_u32(&row_acc_var[col + 8]);
-			uint32x4_t acc_var_3 = vld1q_u32(&row_acc_var[col + 12]);
+						uint32x4_t acc_var_0 = vld1q_u32(&row_acc_var[col]);
+						uint32x4_t acc_var_1 = vld1q_u32(&row_acc_var[col + 4]);
+						uint32x4_t acc_var_2 = vld1q_u32(&row_acc_var[col + 8]);
+						uint32x4_t acc_var_3 = vld1q_u32(&row_acc_var[col + 12]);
 
-			acc_var_0 = vaddq_u32(acc_var_0, vmulq_u32(vmovlbq_u16(img_even), vmovlbq_u16(img_even)));
-			acc_var_1 = vaddq_u32(acc_var_1, vmulq_u32(vmovltq_u16(img_even), vmovltq_u16(img_even)));
-			acc_var_2 = vaddq_u32(acc_var_2, vmulq_u32(vmovlbq_u16(img_odd),  vmovlbq_u16(img_odd)));
-			acc_var_3 = vaddq_u32(acc_var_3, vmulq_u32(vmovltq_u16(img_odd),  vmovltq_u16(img_odd)));
+						acc_var_0 = vaddq_u32(acc_var_0, vmulq_u32(vmovlbq_u16(img_even), vmovlbq_u16(img_even)));
+						acc_var_1 = vaddq_u32(acc_var_1, vmulq_u32(vmovltq_u16(img_even), vmovltq_u16(img_even)));
+						acc_var_2 = vaddq_u32(acc_var_2, vmulq_u32(vmovlbq_u16(img_odd),  vmovlbq_u16(img_odd)));
+						acc_var_3 = vaddq_u32(acc_var_3, vmulq_u32(vmovltq_u16(img_odd),  vmovltq_u16(img_odd)));
 
-			uint32x4_t acc_even_lo = vmovlbq_u16(acc_even);
-			uint32x4_t acc_even_hi = vmovltq_u16(acc_even);
-			uint32x4_t acc_odd_lo  = vmovlbq_u16(acc_odd);
-			uint32x4_t acc_odd_hi  = vmovltq_u16(acc_odd);
+						uint32x4_t acc_even_lo = vmovlbq_u16(acc_even);
+						uint32x4_t acc_even_hi = vmovltq_u16(acc_even);
+						uint32x4_t acc_odd_lo  = vmovlbq_u16(acc_odd);
+						uint32x4_t acc_odd_hi  = vmovltq_u16(acc_odd);
 
-			uint32x4_t mean_sq_0 = vshrq_n_u32(vmulq_u32(acc_even_lo, acc_even_lo), 10);
-			uint32x4_t mean_sq_1 = vshrq_n_u32(vmulq_u32(acc_even_hi, acc_even_hi), 10);
-			uint32x4_t mean_sq_2 = vshrq_n_u32(vmulq_u32(acc_odd_lo,  acc_odd_lo),  10);
-			uint32x4_t mean_sq_3 = vshrq_n_u32(vmulq_u32(acc_odd_hi,  acc_odd_hi),  10);
+						uint32x4_t mean_sq_0 = vshrq_n_u32(vmulq_u32(acc_even_lo, acc_even_lo), 10);
+						uint32x4_t mean_sq_1 = vshrq_n_u32(vmulq_u32(acc_even_hi, acc_even_hi), 10);
+						uint32x4_t mean_sq_2 = vshrq_n_u32(vmulq_u32(acc_odd_lo,  acc_odd_lo),  10);
+						uint32x4_t mean_sq_3 = vshrq_n_u32(vmulq_u32(acc_odd_hi,  acc_odd_hi),  10);
 
-			uint32x4_t var_0 = vqsubq_u32(vshrq_n_u32(acc_var_0, 5), mean_sq_0);
-			uint32x4_t var_1 = vqsubq_u32(vshrq_n_u32(acc_var_1, 5), mean_sq_1);
-			uint32x4_t var_2 = vqsubq_u32(vshrq_n_u32(acc_var_2, 5), mean_sq_2);
-			uint32x4_t var_3 = vqsubq_u32(vshrq_n_u32(acc_var_3, 5), mean_sq_3);
+						uint32x4_t var_0 = vqsubq_u32(vshrq_n_u32(acc_var_0, 5), mean_sq_0);
+						uint32x4_t var_1 = vqsubq_u32(vshrq_n_u32(acc_var_1, 5), mean_sq_1);
+						uint32x4_t var_2 = vqsubq_u32(vshrq_n_u32(acc_var_2, 5), mean_sq_2);
+						uint32x4_t var_3 = vqsubq_u32(vshrq_n_u32(acc_var_3, 5), mean_sq_3);
 
-			uint16x8_t var_even = vdupq_n_u16(0);
-			var_even = vmovnbq_u32(var_even, var_0);
-			var_even = vmovntq_u32(var_even, var_1);
+						uint16x8_t var_even = vdupq_n_u16(0);
+						var_even = vmovnbq_u32(var_even, var_0);
+						var_even = vmovntq_u32(var_even, var_1);
 
-			uint16x8_t var_odd = vdupq_n_u16(0);
-			var_odd = vmovnbq_u32(var_odd, var_2);
-			var_odd = vmovntq_u32(var_odd, var_3);
+						uint16x8_t var_odd = vdupq_n_u16(0);
+						var_odd = vmovnbq_u32(var_odd, var_2);
+						var_odd = vmovntq_u32(var_odd, var_3);
 
-			uint16x8x2_t result_var;
-			result_var.val[0] = var_even;
-			result_var.val[1] = var_odd;
-			vst2q_u16(&row_dst_var[col], result_var);
+						uint16x8x2_t result_var;
+						result_var.val[0] = var_even;
+						result_var.val[1] = var_odd;
+						vst2q_u16(&row_dst_var[col], result_var);
         }
 
         for (int col = last_rows; col < width; col++)
@@ -311,6 +311,19 @@ static void stat_adjustment(uint8_t *p_src, uint8_t *p_detect, uint8_t *p_mean, 
 	}
 }
 
+/* Fraction (0-100) of p_detect's pixels flagged MAX_GREY, i.e. how much of
+ * this pipe's frame the detector (post neighbour-count filtering) flagged. */
+static float detect_percentage(const uint8_t *p_detect, uint32_t size)
+{
+  uint32_t count = 0;
+
+  for (uint32_t i = 0; i < size; i++)
+    if (p_detect[i] == MAX_GREY)
+      count++;
+
+  return (100.0f * (float)count) / (float)size;
+}
+
 /* ==========================================================================
  * Public API
  * ========================================================================== */
@@ -373,7 +386,7 @@ void DETECT_CalibrateStats(void)
   nb_capture++;
 }
 
-bool DETECT_ProcessFrame(void)
+bool DETECT_ProcessFrame(float *pct_pipe1, float *pct_pipe2)
 {
   bool is_detect = false;
 
@@ -383,10 +396,12 @@ bool DETECT_ProcessFrame(void)
   pixel_detection(buffer_pipe1_capture, frame1_pipe1, frame2_pipe1, detect_mvt_pipe1, detect_tmp_pipe1,
                    detect_pipe1, mean_pipe1, std_pipe1, height_pipe1, width_pipe1, 3, &is_detect, &nb_capture);
   stat_adjustment(buffer_pipe1_capture, detect_pipe1, mean_pipe1, var_pipe1, std_pipe1, height_pipe1, width_pipe1);
+  *pct_pipe1 = detect_percentage(detect_pipe1, size_pipe1);
 
   pixel_detection(buffer_pipe2_capture, frame1_pipe2, frame2_pipe2, detect_mvt_pipe2, detect_tmp_pipe2,
                    detect_pipe2, mean_pipe2, std_pipe2, height_pipe2, width_pipe2, 2, &is_detect, &nb_capture);
   stat_adjustment(buffer_pipe2_capture, detect_pipe2, mean_pipe2, var_pipe2, std_pipe2, height_pipe2, width_pipe2);
+  *pct_pipe2 = detect_percentage(detect_pipe2, size_pipe2);
 
   if(nb_capture < 34) nb_capture++;
 

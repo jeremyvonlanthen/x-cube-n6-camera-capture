@@ -358,7 +358,7 @@ int record_h264_to_ram(int height, int rec_duration)
     }
   }
   unsigned long encoding = 100*encode_ok_count/frame_count;
-  printf("[REC] capture %s: %.2f%% encoding\r\n", encoding==100. ? "sucess" : "error", encoding);
+  printf("[REC] capture %s: %.2lu%% encoding\r\n", encoding==100. ? "sucess" : "error", encoding);
 
   /* Stop the capture->encode pipeline started by setup_record_h264(). */
   h264_streaming = false;

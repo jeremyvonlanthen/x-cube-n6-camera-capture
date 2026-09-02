@@ -319,8 +319,10 @@ void app_run(void)
 				break;
 			}
 
-			if(DETECT_ProcessFrame() || BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
-				printf("[FSM] movement detected!\r\n");
+			float detect_pct_pipe1 = 0.0f, detect_pct_pipe2 = 0.0f;
+			if(DETECT_ProcessFrame(&detect_pct_pipe1, &detect_pct_pipe2) || BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
+				printf("[FSM] movement detected! (pipe1: %.1f%%, pipe2: %.1f%%)\r\n",
+				       detect_pct_pipe1, detect_pct_pipe2);
 				actual_ticks = HAL_GetTick();
 				state = RECORD_MODE_INIT;
 				break;

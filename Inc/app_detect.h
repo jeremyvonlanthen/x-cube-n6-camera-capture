@@ -26,7 +26,10 @@ void DETECT_CalibrateStats(void);
 /* One detect cycle: captures a pipe1+pipe2 snapshot (capture_detect_frame)
  * and runs the movement/statistical-outlier detector on both pipes,
  * adjusting the running mean/std as it goes. Returns true if movement was
- * detected on either pipe. */
-bool DETECT_ProcessFrame(void);
+ * detected on either pipe.
+ *   pct_pipe1/pct_pipe2 : filled with the percentage (0-100) of each pipe's
+ *     pixels flagged by the detector (post neighbour-count filtering) for
+ *     this frame -- regardless of whether is_detect ended up true. */
+bool DETECT_ProcessFrame(float *pct_pipe1, float *pct_pipe2);
 
 #endif /* APP_DETECT_H */
