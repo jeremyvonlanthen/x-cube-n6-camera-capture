@@ -261,11 +261,17 @@ class InteractiveCropView(QGraphicsView):
         self._img_w = self._img_h = 0
         self._left_margin = self._top_margin = self._bottom_margin = 0
         self._active_key = 'p1'
+        # Aperçu "résolution réduite" (pixellisation réelle de la zone,
+        # simulant decimation+downsize) -- voir update_pixel_preview().
+        self._img_np = None
+        self._pixelate_enabled = False
+        self._pixel_items = {}
+        self._pending_block_sizes = {}
 
     def set_image(self, img_np):
         h, w = img_np.shape[:2]
-        buf = np.ascontiguousarray(img_np)
-        qimg = QImage(buf.data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+        self._img_np = np.ascontiguousarray(img_np)
+        qimg = QImage(self._img_np.data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
         pix = QPixmap.fromImage(qimg)
         if self._pix_item is None:
             self._pix_item = QGraphicsPixmapItem(pix)
@@ -366,7 +372,10 @@ class InteractiveCropView(QGraphicsView):
             item._img_w, item._img_h = self._img_w, self._img_h
             item.on_change = on_change
             item.setRect(rect)
-        item.setZValue(1 if key == self._active_key else 0)
+        # zValue > 1 (au-dessus de l'aperçu pixellisé, zValue 1, lui-même
+        # au-dessus de l'image de base, zValue 0 implicite) : le remplissage
+        # translucide du rectangle reste visible par-dessus la pixellisation.
+        item.setZValue(3 if key == self._active_key else 2)
         item.set_active(key == self._active_key)
 
     def set_active_pipe(self, key):
@@ -374,13 +383,73 @@ class InteractiveCropView(QGraphicsView):
         zone chevauchante ne bloque l'accès aux poignées de l'autre."""
         self._active_key = key
         for k, item in self._rect_items.items():
-            item.setZValue(1 if k == key else 0)
+            item.setZValue(3 if k == key else 2)
             item.set_active(k == key)
 
     def clear_rects(self):
         for item in self._rect_items.values():
             self._scene.removeItem(item)
         self._rect_items = {}
+        for item in self._pixel_items.values():
+            self._scene.removeItem(item)
+        self._pixel_items = {}
+        self._pending_block_sizes = {}
+
+    # ── Aperçu "résolution réduite" ─────────────────────────────────────────
+
+    def set_pixelate_enabled(self, enabled):
+        """Bascule l'aperçu pixellisé pour toutes les zones déjà posées,
+        en réutilisant le dernier facteur connu pour chacune."""
+        self._pixelate_enabled = enabled
+        if not enabled:
+            for item in self._pixel_items.values():
+                self._scene.removeItem(item)
+            self._pixel_items = {}
+            return
+        for key, block_size in self._pending_block_sizes.items():
+            if key in self._rect_items and block_size:
+                self._render_pixel_preview(key, block_size)
+
+    def update_pixel_preview(self, key, block_size):
+        """Appelé à chaque changement pertinent (zone déplacée/redimensionnée,
+        taille de bloc modifiée) -- ne redessine que si l'aperçu est activé,
+        mais mémorise toujours le facteur pour un futur set_pixelate_enabled(True)."""
+        self._pending_block_sizes[key] = block_size
+        if self._pixelate_enabled:
+            self._render_pixel_preview(key, block_size)
+
+    def _render_pixel_preview(self, key, block_size):
+        item = self._rect_items.get(key)
+        if item is None or self._img_np is None or not block_size or block_size < 1:
+            return
+
+        r = item.rect()
+        left = max(0, min(int(r.left()), self._img_w - 1))
+        top  = max(0, min(int(r.top()),  self._img_h - 1))
+        w = max(1, min(int(r.width()),  self._img_w - left))
+        h = max(1, min(int(r.height()), self._img_h - top))
+
+        # Downscale (moyennage, comme le downsize matériel) puis upscale au
+        # plus proche voisin (bloc plein, comme l'affichage d'un pixel de
+        # sortie) : simule fidèlement la perte de détail, pas une imitation.
+        sub = self._img_np[top:top + h, left:left + w]
+        small_w = max(1, round(w / block_size))
+        small_h = max(1, round(h / block_size))
+        blocky = (Image.fromarray(sub)
+                  .resize((small_w, small_h), Image.BOX)
+                  .resize((w, h), Image.NEAREST))
+        arr = np.ascontiguousarray(np.array(blocky, dtype=np.uint8))
+        qimg = QImage(arr.data, w, h, w * 3, QImage.Format.Format_RGB888).copy()
+
+        pix_item = self._pixel_items.get(key)
+        if pix_item is None:
+            pix_item = QGraphicsPixmapItem(QPixmap.fromImage(qimg))
+            pix_item.setZValue(1)
+            self._scene.addItem(pix_item)
+            self._pixel_items[key] = pix_item
+        else:
+            pix_item.setPixmap(QPixmap.fromImage(qimg))
+        pix_item.setPos(left, top)
 
     def _fit(self):
         if self._pix_item is not None:
@@ -727,16 +796,17 @@ BLOCK_SIZE_TOOLTIP_HTML = (
     "Facteur de réduction de la zone : un bloc de N&times;N pixels capteur "
     "devient 1 seul pixel de sortie.<br>"
     "<pre>■ ■ ■ ■\n■ ■ ■ ■   &rarr;   ■\n■ ■ ■ ■\n■ ■ ■ ■</pre>"
-    "4&times;4 pixels capteur &rarr; 1 pixel de sortie<br><br>"
+    "<i>4&times;4 pixels capteur &rarr; 1 pixel de sortie</i><br><br>"
     "Plus la valeur est grande, plus la zone est réduite (et moins "
     "bruitée) &mdash; mais sa résolution effective diminue d'autant.<br><br>"
     "<b>Décimation</b> : ne garde qu'1 pixel sur N et jette les autres "
     "(aucun moyennage &rarr; le bruit du capteur reste entier).<br>"
     "<b>Downsize</b> : redimensionnement par interpolation, qui moyenne "
-    "plusieurs pixels voisins en un seul (&rarr; réduit le bruit).<br><br>"
-    "Pipe 2 seulement : le downsize seul plafonne à &times;8. Au-delà, une "
-    "décimation est ajoutée automatiquement en amont pour atteindre la "
-    "taille de bloc demandée (champ « décimation / downsize » ci-dessous)."
+    "plusieurs pixels voisins en un seul, <b>limité à &times;8</b> (&rarr; réduit le bruit).<br><br>"
+    "Pipe 1 : le \"Taille bloc\" correspond au downsize seulement.<br>"
+    "Pipe 2 : le \"Taille bloc\" correspond à <b>décimation &times; downsize</b> ; "
+    "la décimation est ajoutée automatiquement en amont (comme facteur de l'image \"downsizée\" pour atteindre la "
+    "taille de bloc demandée)."
 )
 
 
@@ -803,6 +873,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_signals()
         self._update_dec_label()  # calcule décimation/downsize pour la taille bloc par défaut
+        self._reset_display()     # état initial : aucune image -> tous les champs verrouillés
         self._update_buttons()
 
         self.resize(1200, 850)
@@ -903,6 +974,12 @@ class MainWindow(QMainWindow):
         self.chk_unlock_fields = QCheckBox("Modifier les limites manuellement")
         agl.addWidget(self.chk_unlock_fields)
 
+        # Aperçu de la résolution réduite (pixellisation réelle des zones,
+        # simulant decimation+downsize) -- décoché par défaut, config déjà
+        # appliquée ou non.
+        self.chk_pixel_preview = QCheckBox("Aperçu résolution réduite")
+        agl.addWidget(self.chk_pixel_preview)
+
         ll.addWidget(apply_group)
 
         # ── Pipe 1 ────────────────────────────────────────────────────────────
@@ -939,7 +1016,7 @@ class MainWindow(QMainWindow):
         # décime (pipe 1 downsize sans décimation, downsize_ratio_pipe1
         # découle directement de sa taille de bloc, sans recherche de
         # combinaison).
-        self.p2_dec_label = QLineEdit("décimation=— / downsize=—")
+        self.p2_dec_label = QLineEdit("décimation = — | downsize = —")
         self.p2_dec_label.setReadOnly(True)
         g2l.addWidget(self.p2_dec_label, 5, 0, 1, 2)
         ll.addWidget(g2)
@@ -1075,10 +1152,13 @@ class MainWindow(QMainWindow):
         self.btn_active_p1.clicked.connect(lambda: self._set_active_pipe('p1'))
         self.btn_active_p2.clicked.connect(lambda: self._set_active_pipe('p2'))
         self.chk_unlock_fields.toggled.connect(self._on_unlock_toggled)
+        self.chk_pixel_preview.toggled.connect(self._on_pixel_preview_toggled)
         for f in (self.p1_top, self.p1_bot, self.p1_left, self.p1_right):
             f.textChanged.connect(lambda _, k='p1': self._sync_rect_from_fields(k))
         for f in (self.p2_top, self.p2_bot, self.p2_left, self.p2_right):
             f.textChanged.connect(lambda _, k='p2': self._sync_rect_from_fields(k))
+        self.p1_bs.textChanged.connect(lambda: self._update_pixel_preview('p1'))
+        self.p2_bs.textChanged.connect(lambda: self._update_pixel_preview('p2'))
 
     # ── Connexion automatique (polling VID 0x0483) ────────────────────────────
 
@@ -1122,18 +1202,18 @@ class MainWindow(QMainWindow):
             bs = int(self.p2_bs.text())
         except ValueError:
             self.p2_dec_label.setStyleSheet("")
-            self.p2_dec_label.setText("décimation=— / downsize=—")
+            self.p2_dec_label.setText("décimation = — | downsize = —")
             return
         if bs <= 0:
             self.p2_dec_label.setStyleSheet("")
-            self.p2_dec_label.setText("décimation=— / downsize=—")
+            self.p2_dec_label.setText("décimation = — | downsize = —")
             return
         dec, ds = compute_pipe2_params(bs)
         if dec is None:
             self.p2_dec_label.setText("⚠ taille de bloc invalide pour ce pipe")
             self.p2_dec_label.setStyleSheet("color: #d43a3a;")
         else:
-            self.p2_dec_label.setText(f"décimation={dec}  downsize={ds:.2f}")
+            self.p2_dec_label.setText(f"décimation = {dec} | downsize = {ds:.2f}")
             self.p2_dec_label.setStyleSheet("")
 
     # ── Capture ───────────────────────────────────────────────────────────────
@@ -1159,10 +1239,44 @@ class MainWindow(QMainWindow):
     def _on_pipe1_rect_changed(self, top, bottom, left, right):
         self.p1_top.setText(str(top));   self.p1_bot.setText(str(bottom))
         self.p1_left.setText(str(left)); self.p1_right.setText(str(right))
+        self._update_pixel_preview('p1')
 
     def _on_pipe2_rect_changed(self, top, bottom, left, right):
         self.p2_top.setText(str(top));   self.p2_bot.setText(str(bottom))
         self.p2_left.setText(str(left)); self.p2_right.setText(str(right))
+        self._update_pixel_preview('p2')
+
+    # ── Aperçu résolution réduite ────────────────────────────────────────────
+
+    def _get_block_size(self, key):
+        """Facteur de réduction total de la zone (= « taille bloc » pour les
+        deux pipes : pour pipe 2, decimation x downsize == taille bloc par
+        construction, voir compute_pipe2_params). None si le champ est
+        invalide -- l'appelant doit alors s'abstenir de dessiner l'aperçu."""
+        try:
+            if key == 'p1':
+                bs = int(self.p1_bs.text())
+                if bs < 1 or bs > 8:
+                    return None
+                return min(float(bs), MAX_DOWNSIZE)
+            bs = int(self.p2_bs.text())
+            if bs < 1:
+                return None
+            dec, _ds = compute_pipe2_params(bs)
+            return float(bs) if dec is not None else None
+        except ValueError:
+            return None
+
+    def _update_pixel_preview(self, key):
+        block_size = self._get_block_size(key)
+        if block_size is not None:
+            self.crop_view.update_pixel_preview(key, block_size)
+
+    def _on_pixel_preview_toggled(self, checked):
+        self.crop_view.set_pixelate_enabled(checked)
+        if checked:
+            self._update_pixel_preview('p1')
+            self._update_pixel_preview('p2')
 
     def _sync_rect_from_fields(self, key):
         """Répercute en direct une saisie manuelle (champs déverrouillés)
@@ -1187,6 +1301,7 @@ class MainWindow(QMainWindow):
         if bottom <= top or right <= left:
             return
         self.crop_view.set_rect(key, top, bottom, left, right, color, callback)
+        self._update_pixel_preview(key)
 
     def _on_unlock_toggled(self, checked):
         """La case « Modifier les limites manuellement » est la seule
@@ -1226,6 +1341,8 @@ class MainWindow(QMainWindow):
             self.crop_view.set_active_pipe(self._active_pipe)
             self.btn_active_p1.setChecked(self._active_pipe == 'p1')
             self.btn_active_p2.setChecked(self._active_pipe == 'p2')
+            self._update_pixel_preview('p1')
+            self._update_pixel_preview('p2')
 
             self._tested = True             # débloque « Envoyer »
             self.btn_apply.setText("Retirer la config")
@@ -1281,6 +1398,13 @@ class MainWindow(QMainWindow):
     def _update_buttons(self):
         """Applique les règles d'enchaînement Capturer → Appliquer → Envoyer."""
         connected = self._auto_port is not None
+
+        # Taille bloc : verrouillée tant qu'aucune image n'a été capturée --
+        # contrairement aux 8 champs de limites, ce paramètre n'a pas
+        # d'équivalent « glisser à la souris », donc pas besoin d'attendre
+        # « Modifier les limites manuellement » : juste qu'une image existe.
+        self.p1_bs.setReadOnly(not self._captured)
+        self.p2_bs.setReadOnly(not self._captured)
 
         if self._sent or self._busy:
             # Session terminée ou opération en cours : tout est figé
