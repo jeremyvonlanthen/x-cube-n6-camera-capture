@@ -51,7 +51,6 @@
 #include "stm32n6xx_hal_dcmipp.h"
 #ifdef STM32N6570_DK_REV
 #include "stm32n6570_discovery.h"
-#include "stm32n6570_discovery_sd.h"
 #else
 #include "stm32n6xx_nucleo.h"
 #endif
@@ -81,14 +80,11 @@ uint8_t *buffer_warmup = NULL;
 JPG_conf_t jpg_conf = { 0 };
 
 /* Capture/mode flags */
-volatile bool sd_reinit_for_storage = false;
 volatile bool snapshot_in_progress = false;
 volatile bool frame_ready = false;
 volatile int  warmup_frames = 0;
 volatile bool warmup_done = false;
 volatile bool uart_busy = false; //true = UART used for binary data, printf muted
-volatile bool config_already_saved = false;
-volatile bool is_video_to_record = false;
 uint32_t actual_ticks;
 
 /* H264 recording state (shared with app_record.c / app_callbacks.c) */
@@ -161,9 +157,6 @@ static bool is_target_animal_detected(void)
 
 void app_run(void)
 {
-	/* TAMP button read by polling in MOVEMENT_DETECTION */
-	BSP_PB_Init(BUTTON_TAMP, BUTTON_MODE_GPIO);
-
 	#if DEBUG_MODE
 	HAL_DBGMCU_EnableDBGSleepMode();
 	HAL_DBGMCU_EnableDBGStopMode();
@@ -173,6 +166,11 @@ void app_run(void)
 	char timestamp[20];
 	char path[40];
 	int rec_files_height = 480; // 480, 720, 960, 1080 (max)
+
+	bool is_img_to_save = false;
+	bool is_video_to_record = false;
+	bool sd_reinit_for_storage = false;
+	bool config_already_saved = false;
 
 	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
 		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
@@ -244,14 +242,9 @@ void app_run(void)
 		case SAVE_PIPES_CONFIG:
 			if(config_already_saved) break;
 
-			/* Sauver la configuration dans la flash a une adresse fixe pour
-			 * pouvoir y réaccéder après une extinction du STM (voir
-			 * app_flash_config.h). dcmipp_apply_detect_config() la relira à
-			 * chaque entrée dans DETECT_MODE_WARMUP -- notamment sur un boot
-			 * DIURNAL/24H, qui saute entièrement cette phase de config UART. */
 			if (CONFIG_FLASH_Save(&config_py) == 0)
 				printf("[FSM] pipes config saved to flash\n"
-						"[FSM] now ready to execute diurnal or 24h mode\r\n");
+							 "[FSM] now ready to execute diurnal or 24h mode\r\n");
 			else printf("[FSM] pipes config flash save FAILED\r\n");
 
 			config_already_saved = true;
@@ -312,15 +305,14 @@ void app_run(void)
 			break;
 
 		case MOVEMENT_DETECTION:
-			//check of mecanical insertion of SD card
-			if(BSP_SD_IsDetected(0) != SD_PRESENT){
+			if(SD_inserted()){
 				printf("[uSD] uSD has been removed, SD re-init...\r\n");
 				state = SD_CARD_INIT;
 				break;
 			}
 
 			float detect_pct_pipe1 = 0.0f, detect_pct_pipe2 = 0.0f;
-			if(DETECT_ProcessFrame(&detect_pct_pipe1, &detect_pct_pipe2) || BSP_PB_GetState(BUTTON_TAMP) == GPIO_PIN_SET){
+			if(DETECT_ProcessFrame(&detect_pct_pipe1, &detect_pct_pipe2)){
 				printf("[FSM] movement detected! (pipe1: %.1f%%, pipe2: %.1f%%)\r\n",
 				       detect_pct_pipe1, detect_pct_pipe2);
 				actual_ticks = HAL_GetTick();
@@ -336,7 +328,13 @@ void app_run(void)
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
 			record_snapshot_to_ram(rec_files_height);
 
-			is_video_to_record = is_target_animal_detected();
+			/* is_target_animal_detected() picks the primary format (MP4 if
+			 * true, JPEG if false); RECORD_JPEG_AND_MP4 force-saves the other
+			 * one too instead of skipping it (see app_shared.h). */
+			bool animal_detected = is_target_animal_detected();
+			is_video_to_record = animal_detected || RECORD_JPEG_AND_MP4;
+			is_img_to_save = !animal_detected || RECORD_JPEG_AND_MP4;
+
 			if(is_video_to_record)
 				state = VIDEO_CAPTURE;
 			else{
@@ -358,14 +356,14 @@ void app_run(void)
 		case MULTIMEDIA_STORAGE:
 			REC_MakeDir(timestamp);
 
+			if(is_img_to_save){
+				snprintf(path, sizeof(path), "%s/image.jpeg", timestamp);
+				if(record_snapshot_flush_to_sd(path) == 0) printf("[REC] snapshot save FAILED\r\n");
+			}
+
 			if(is_video_to_record){
 				snprintf(path, sizeof(path), "%s/video.mp4", timestamp);
-				if(record_h264_flush_to_sd(path) != 0) printf("[FSM] video save FAILED\r\n");
-			}
-			else{
-				snprintf(path, sizeof(path), "%s/image.jpeg", timestamp);
-				if(record_snapshot_flush_to_sd(path) == 0) printf("[FSM] photo saved to %s\r\n", path);
-				else printf("[FSM] photo save FAILED\r\n");
+				if(record_h264_flush_to_sd(path) != 0) printf("[REC] video save FAILED\r\n");
 			}
 
 			SD_PowerDown();

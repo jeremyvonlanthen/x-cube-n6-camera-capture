@@ -22,6 +22,8 @@
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)
 
+#define RECORD_JPEG_AND_MP4 1
+
 /* DEBUG_MODE
  * 0: measurement mode: play with `RUN` and disconnect ST-Link USB
  * 1: debugging mode: play with `Debug` but assume extra consumption current */

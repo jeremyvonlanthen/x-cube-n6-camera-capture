@@ -705,16 +705,71 @@ QTextEdit#logbox {
 }
 QFrame#sep { background-color: #c9d2e0; max-height: 1px; min-height: 1px; }
 QFrame#panel { background-color: #fbfcfe; border: 1px solid #c9d2e0; border-radius: 4px; }
+QToolTip {
+    background-color: #fbfcfe;
+    color: #2a3442;
+    border: 1px solid #c9d2e0;
+    padding: 6px 8px;
+    font-size: 11px;
+}
 """
 
 # =============================================================================
 #  Helpers UI
 # =============================================================================
 
+# Infobulle "Taille bloc", partagée par les champs pipe 1 et pipe 2. Texte
+# simple uniquement (pas de tableaux/couleurs codées en dur) : le fond et la
+# couleur de texte viennent de la règle QToolTip du style global (STYLE
+# ci-dessus), comme tout le reste du GUI -- rendu fiable garanti.
+BLOCK_SIZE_TOOLTIP_HTML = (
+    "<b>Taille bloc</b><br>"
+    "Facteur de réduction de la zone : un bloc de N&times;N pixels capteur "
+    "devient 1 seul pixel de sortie.<br>"
+    "<pre>■ ■ ■ ■\n■ ■ ■ ■   &rarr;   ■\n■ ■ ■ ■\n■ ■ ■ ■</pre>"
+    "4&times;4 pixels capteur &rarr; 1 pixel de sortie<br><br>"
+    "Plus la valeur est grande, plus la zone est réduite (et moins "
+    "bruitée) &mdash; mais sa résolution effective diminue d'autant.<br><br>"
+    "<b>Décimation</b> : ne garde qu'1 pixel sur N et jette les autres "
+    "(aucun moyennage &rarr; le bruit du capteur reste entier).<br>"
+    "<b>Downsize</b> : redimensionnement par interpolation, qui moyenne "
+    "plusieurs pixels voisins en un seul (&rarr; réduit le bruit).<br><br>"
+    "Pipe 2 seulement : le downsize seul plafonne à &times;8. Au-delà, une "
+    "décimation est ajoutée automatiquement en amont pour atteindre la "
+    "taille de bloc demandée (champ « décimation / downsize » ci-dessous)."
+)
+
+
 def _lbl(text):
     l = QLabel(text)
     l.setFont(QFont("Segoe UI", 9))
     return l
+
+
+def _info_icon(tooltip_html, size=15):
+    """Petit badge 'ⓘ' discret ; l'infobulle s'ouvre au survol."""
+    icon = QLabel("ℹ")  # ℹ
+    icon.setFixedSize(size, size)
+    icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    icon.setStyleSheet(
+        f"QLabel {{ background-color: #d6e3f7; color: #2a5ad4;"
+        f" border-radius: {size // 2}px; font-size: 10px; font-weight: bold; }}"
+    )
+    icon.setToolTip(tooltip_html)
+    icon.setCursor(Qt.CursorShape.WhatsThisCursor)
+    return icon
+
+
+def _lbl_with_info(text, tooltip_html):
+    """Label de champ + icône info accolée (remplace un _lbl() simple dans une grille)."""
+    w = QWidget()
+    h = QHBoxLayout(w)
+    h.setContentsMargins(0, 0, 0, 0)
+    h.setSpacing(5)
+    h.addWidget(_lbl(text))
+    h.addWidget(_info_icon(tooltip_html))
+    h.addStretch()
+    return w
 
 
 def _int_field(default="0", max_val=99999):
@@ -747,6 +802,7 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._connect_signals()
+        self._update_dec_label()  # calcule décimation/downsize pour la taille bloc par défaut
         self._update_buttons()
 
         self.resize(1200, 850)
@@ -860,7 +916,7 @@ class MainWindow(QMainWindow):
         self.p1_left = _int_field(0);   g1l.addWidget(self.p1_left, 2, 1)
         g1l.addWidget(_lbl("Limite droite (X px)"), 3, 0)
         self.p1_right = _int_field(2592); g1l.addWidget(self.p1_right, 3, 1)
-        g1l.addWidget(_lbl("Taille bloc   (px, ≤8)"), 4, 0)
+        g1l.addWidget(_lbl_with_info("Taille bloc   (px, ≤8)", BLOCK_SIZE_TOOLTIP_HTML), 4, 0)
         self.p1_bs = _int_field(5, 8);  g1l.addWidget(self.p1_bs, 4, 1)
         ll.addWidget(g1)
 
@@ -875,7 +931,7 @@ class MainWindow(QMainWindow):
         self.p2_left = _int_field(0);   g2l.addWidget(self.p2_left, 2, 1)
         g2l.addWidget(_lbl("Limite droite (X px)"), 3, 0)
         self.p2_right = _int_field(2592); g2l.addWidget(self.p2_right, 3, 1)
-        g2l.addWidget(_lbl("Taille bloc   (px)"),   4, 0)
+        g2l.addWidget(_lbl_with_info("Taille bloc   (px)", BLOCK_SIZE_TOOLTIP_HTML), 4, 0)
         self.p2_bs = _int_field(35);    g2l.addWidget(self.p2_bs, 4, 1)
 
         # Info decimation (calculée automatiquement, champ readonly comme les
@@ -1077,7 +1133,7 @@ class MainWindow(QMainWindow):
             self.p2_dec_label.setText("⚠ taille de bloc invalide pour ce pipe")
             self.p2_dec_label.setStyleSheet("color: #d43a3a;")
         else:
-            self.p2_dec_label.setText(f"décimation={dec}  downsize={ds:.4f}")
+            self.p2_dec_label.setText(f"décimation={dec}  downsize={ds:.2f}")
             self.p2_dec_label.setStyleSheet("")
 
     # ── Capture ───────────────────────────────────────────────────────────────

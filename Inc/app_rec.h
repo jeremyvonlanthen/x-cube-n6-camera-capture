@@ -24,6 +24,8 @@
  *           detail into a single "re-init" line instead of repeating it. */
 int SD_init(bool quiet);
 
+int SD_inserted(void);
+
 /* Called once at startup (before any REC_Start).  Configures the SDMMC2
  * kernel clock, initializes the BSP SD, mounts the FAT32 volume and creates
  * the SD writer task.  Returns 0 on success.
@@ -37,15 +39,6 @@ int REC_Init(bool quiet);
  * SD_MspDeInit() in stm32n6570_discovery_sd.c. REC_Init() must be called
  * again before any further SD access. */
 void SD_PowerDown(void);
-
-/* Lighter alternative to SD_PowerDown(): gates only the SDMMC2 bus clock,
- * which free-runs continuously (up to 50 MHz) whenever the card is
- * initialized -- the dominant contributor to "SD active" current. The card
- * stays selected and the FAT32 volume stays mounted, so REC_WakeSD() resumes
- * instantly (no BSP_SD_Init/f_mount, no card re-identification). Call
- * REC_WakeSD() before any SD read/write, and REC_SleepSD() again once done. */
-void REC_SleepSD(void);
-void REC_WakeSD(void);
 
 /* Creates dirname on the FAT32 volume (e.g. a per-recording "<timestamp>/"
  * folder). Tolerates an already-existing directory. Called directly from the

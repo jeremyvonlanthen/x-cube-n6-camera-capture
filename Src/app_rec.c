@@ -434,6 +434,11 @@ int SD_init(bool quiet)
   return (rec_ready == 0);
 }
 
+int SD_inserted(void)
+{
+	return (BSP_SD_IsDetected(0) != SD_PRESENT);
+}
+
 /* Tracks whether SD_PowerDown() was the last thing done to hsd_sdmmc[0]:
  * it already runs BSP_SD_DeInit() (HAL_SD_DeInit + SDMMC2 clock gated off),
  * so REC_Init()'s own hot-removal HAL_SD_DeInit() call below must be
@@ -533,39 +538,6 @@ int REC_MakeDir(const char *dirname)
     return -1;
   }
   return 0;
-}
-
-/* ------------------------------------------------------------------------ */
-/* SD clock gating (fast-resume sleep, no re-init)                          */
-/*                                                                          */
-/* Unlike SD_PowerDown(), this keeps the card selected (RCA/CID/CSD in   */
-/* hsd_sdmmc[0] untouched), the GPIO/AF config untouched and the FAT32      */
-/* volume mounted -- only the SDMMC2 bus clock is gated. MX_SDMMC1_SD_Init()*/
-/* sets ClockPowerSave = DISABLE, so that clock free-runs (up to 50 MHz)    */
-/* continuously even at bus idle: gating it is where most of the "SD       */
-/* active" current actually goes. REC_WakeSD() just re-enables the clock -- */
-/* no BSP_SD_Init, no f_mount, no card re-identification needed.            */
-/* ------------------------------------------------------------------------ */
-static volatile bool sd_asleep = false;
-
-void REC_SleepSD(void)
-{
-  if (!sd_asleep) {
-    HAL_NVIC_DisableIRQ(SDMMC2_IRQn); /* no transfer can be in flight once asleep */
-    __HAL_RCC_SDMMC2_CLK_DISABLE();
-    sd_asleep = true;
-    printf("[uSD] SD clock gated (sleep)\r\n");
-  }
-}
-
-void REC_WakeSD(void)
-{
-  if (sd_asleep) {
-    __HAL_RCC_SDMMC2_CLK_ENABLE();
-    HAL_NVIC_EnableIRQ(SDMMC2_IRQn);
-    sd_asleep = false;
-    printf("[uSD] SD clock restored (awake)\r\n");
-  }
 }
 
 int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_size,
