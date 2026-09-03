@@ -358,7 +358,7 @@ void app_run(void)
 
 			if(is_img_to_save){
 				snprintf(path, sizeof(path), "%s/image.jpeg", timestamp);
-				if(record_snapshot_flush_to_sd(path) == 0) printf("[REC] snapshot save FAILED\r\n");
+				if(record_snapshot_flush_to_sd(path) != 0) printf("[REC] snapshot save FAILED\r\n");
 			}
 
 			if(is_video_to_record){

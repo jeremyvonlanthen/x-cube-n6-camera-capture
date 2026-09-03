@@ -25,8 +25,8 @@
 #define RECORD_JPEG_AND_MP4 1
 
 /* DEBUG_MODE
- * 0: measurement mode: play with `RUN` and disconnect ST-Link USB
- * 1: debugging mode: play with `Debug` but assume extra consumption current */
+ * 1: debugging mode: play with `Debug` but assume extra consumption current
+ * 0: dev mode: play with `RUN` of flash CPU (and disconnect ST-Link USB) */
 #define DEBUG_MODE 0
 
 /* LPTIM1 wake-up timer clock frequency, in Hz, used to convert a requested
