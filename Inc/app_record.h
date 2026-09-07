@@ -1,6 +1,6 @@
 #ifndef APP_RECORD_H
 #define APP_RECORD_H
-/* COLOR JPEG snapshot into hires_jpeg_buffer (no SD access). Call in
+/* MONO JPEG snapshot into hires_jpeg_buffer (no SD access). Call in
  * RECORD_MODE_INIT.
  * height: 4:3 photo height (width derived), up to the sensor full resolution.
  * Returns the encoded length (> 0), or <= 0 on failure. */

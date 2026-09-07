@@ -1074,7 +1074,7 @@ class MainWindow(QMainWindow):
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
         # Le µC signale qu'il attend une capture -> (ré)active "Capturer"
-        if "wait for send yuv frame" in text:
+        if "(capturer une image)" in text:
             self._on_ready()
         if "RESTART OF THE CONFIG PROCEDURE" in text:
             self._on_config_warmup()

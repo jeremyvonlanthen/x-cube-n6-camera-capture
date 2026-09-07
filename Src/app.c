@@ -190,9 +190,9 @@ void app_run(void)
 		{
 		case CONFIG_MODE_WARMUP:
 			printf("[FSM] config-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
+			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1, 0);
 
-			printf("[FSM] wait for send yuv frame... (capturer une image)\r\n");
+			printf("[FSM] wait to get config frame... (capturer une image)\r\n");
 			state = SEND_YUV_FRAME;
 			break;
 
@@ -267,7 +267,7 @@ void app_run(void)
 
 		case DETECT_MODE_WARMUP:
 			printf("[FSM] detection-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
+			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1, 1);
 
 			if(config_py.magic != CONFIG_MAGIC){
 				if (CONFIG_FLASH_Load(&config_py) == 0) printf("[FSM] pipes config loaded from flash\r\n");
@@ -313,7 +313,7 @@ void app_run(void)
 
 			float detect_pct_pipe1 = 0.0f, detect_pct_pipe2 = 0.0f;
 			if(DETECT_ProcessFrame(&detect_pct_pipe1, &detect_pct_pipe2)){
-				printf("[FSM] movement detected! (pipe1: %.1f%%, pipe2: %.1f%%)\r\n",
+				printf("[FSM] movement detected! (second plan: %.1f%%, premier plan: %.1f%%)\r\n",
 				       detect_pct_pipe1, detect_pct_pipe2);
 				actual_ticks = HAL_GetTick();
 				state = RECORD_MODE_INIT;

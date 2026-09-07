@@ -1,7 +1,7 @@
 /**
  ******************************************************************************
  * @file    app_capture.c
- * @brief   Camera helpers (full-res warmup + YUV snapshot for config mode).
+ * @brief   Camera helpers (full-res warmup + MONO snapshot for config mode).
  ******************************************************************************
  */
 #include "app_capture.h"
@@ -25,12 +25,11 @@
  * converge for WARMUP_FRAMES_TARGET frames before stopping the pipe(s).
  *   cap_w/cap_h : pipe output size (SENSOR_WIDTH x SENSOR_HEIGHT for both the
  *                 config preview and detect warmup). */
-void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
+void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format, uint8_t two_pipes)
 {
 	static bool camera_initialized = false;
 
   CAM_conf_t cam_conf = { 0 };
-  uint8_t two_pipes = (output_format == DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
   if(camera_initialized) CAM_Deinit();
 
@@ -74,7 +73,7 @@ void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format)
   camera_initialized = true;
 }
 
-/* One full-sensor YUV422 snapshot (config mode), JPEG-encoded and sent to the
+/* One full-sensor MONO snapshot (config mode), JPEG-encoded and sent to the
  * GUI over UART (kept at full resolution for accurate crop-region framing) */
 int capture_yuv(void)
 {
@@ -94,7 +93,7 @@ int capture_yuv(void)
 
   jpg_conf.width      = SENSOR_WIDTH;
   jpg_conf.height     = SENSOR_HEIGHT;
-  jpg_conf.fmt_src    = JPG_SRC_YUV422;
+  jpg_conf.fmt_src    = JPG_SRC_GREY;
   jpg_conf.full_width = SENSOR_WIDTH;
   JPG_Init(&jpg_conf);
   int jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_full_frame,

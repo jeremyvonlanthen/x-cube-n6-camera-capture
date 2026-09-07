@@ -67,12 +67,18 @@ static const ISP_IQParamTypeDef ISP_IQParamCacheInit_IMX335 = {
         .ispGainG = 0,
         .ispGainB = 0,
     },
+    /* Forced monochrome: broadcasts BT.601 luma (0.299R + 0.587G + 0.114B,
+     * coeff unit = 100000000 for x1.0) onto all 3 output channels, so every
+     * DCMIPP pixel format downstream (RGB565, YUV422, ARGB8888...) ends up
+     * with R=G=B / neutral chroma -- only takes effect while AWBAlgo is
+     * disabled below (see isp_core.c: colorConvStatic is only applied when
+     * AWBAlgo.enable == 0). */
     .colorConvStatic = {
-        .enable = 0,
-        .coeff = { { 0, 0, 0, }, { 0, 0, 0, }, { 0, 0, 0, }, }
+        .enable = 1,
+        .coeff = { { 29900000, 58700000, 11400000, }, { 29900000, 58700000, 11400000, }, { 29900000, 58700000, 11400000, }, }
     },
     .AWBAlgo = {
-        .enable = 1,
+        .enable = 0,
         .label = { "JudgeII-A", "JudgeII-TL84", "JudgeII-DAY", "Free Slot", "Free Slot", },
         .referenceColorTemp = { 2810, 4015, 6650, 0, 0, },
         .ispGainR = { 124000000, 182000000, 244000000, 0, 0, },

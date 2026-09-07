@@ -80,15 +80,15 @@ int record_snapshot_to_ram(int height)
   int jpeg_len;
   uint32_t start;
 
-  /* COLOR snapshot while the camera runs in detect (mono, cropped/downsized)
-   * mode: reconfigure PIPE1 ONLY to a full-scene width x height YUV422
+  /* MONO snapshot while the camera runs in detect (mono, cropped/downsized)
+   * mode: reconfigure PIPE1 ONLY to a full-scene width x height MONO
    * downscale (ROI = full sensor).  The sensor is untouched, so the
-   * AE/exposure converged during the detect warmup stay valid -> no delay,
-   * color is immediate.  No restore needed: DETECT_MODE_WARMUP re-applies the
-   * detect setup once the record cycle is done (setup_record_h264()
-   * reconfigures pipe1 again first if this turns out to be a video). */
+   * AE/exposure converged during the detect warmup stay valid -> no delay.
+   * No restore needed: DETECT_MODE_WARMUP re-applies the detect setup once
+   * the record cycle is done (setup_record_h264() reconfigures pipe1 again
+   * first if this turns out to be a video). */
   CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
-                      width, height, DCMIPP_PIXEL_PACKER_FORMAT_YUV422_1);
+                      width, height, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
   /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
   snapshot_in_progress = true;
@@ -127,7 +127,7 @@ int record_snapshot_to_ram(int height)
   /* Hardware JPEG encode: pipe1 was switched to width x height above */
   jpg_conf.width      = width;
   jpg_conf.height     = height;
-  jpg_conf.fmt_src    = JPG_SRC_YUV422; //JPG_SRC_GREY;
+  jpg_conf.fmt_src    = JPG_SRC_GREY;
   jpg_conf.full_width = width;
   JPG_Init(&jpg_conf);
   jpeg_len = JPG_Encode(hires_jpeg_buffer, buffer_full_frame,
@@ -359,6 +359,25 @@ int record_h264_to_ram(int height, int rec_duration)
   }
   unsigned long encoding = 100*encode_ok_count/frame_count;
   printf("[REC] capture %s: %.2lu%% encoding\r\n", encoding==100. ? "sucess" : "error", encoding);
+
+  /* Encoded-size accounting: actual bitrate and RAM-store fill ratio for
+   * this clip. Lets us measure on real footage how much headroom the ISP
+   * grayscale neutralization (colorConvStatic, see imx335_isp_param_conf.h)
+   * buys in the 12 MB store -- rather than guessing from raw bit-depth
+   * ratios (see discussion: chroma_format_idc is hardcoded in the H264
+   * encoder, so the gain is whatever fraction of the bitrate chroma used
+   * to cost, not a fixed factor). */
+  if (h264_ram_frame_count > 0) {
+    uint32_t elapsed_ms = last_frame_tick - start_tick;
+    float elapsed_s = elapsed_ms / 1000.0f;
+    float avg_mbps = elapsed_ms ? (h264_ram_used * 8.0f) / ((float)elapsed_ms * 1000.0f) : 0.0f;
+    float store_fill_pct = 100.0f * (float)h264_ram_used / (float)H264_RAM_STORE_SIZE;
+
+    printf("[REC] encoded %lu KB / %lu frames in %.1f s -> avg %.2f Mbit/s | RAM store %.1f%% full (%lu/%lu frames)\r\n",
+           (unsigned long)(h264_ram_used / 1024), (unsigned long)h264_ram_frame_count, elapsed_s,
+           avg_mbps, store_fill_pct,
+           (unsigned long)h264_ram_frame_count, (unsigned long)H264_RAM_MAX_FRAMES);
+  }
 
   /* Stop the capture->encode pipeline started by setup_record_h264(). */
   h264_streaming = false;
