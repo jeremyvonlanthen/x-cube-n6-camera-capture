@@ -75,7 +75,7 @@ void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format, uint8
 
 /* One full-sensor MONO snapshot (config mode), JPEG-encoded and sent to the
  * GUI over UART (kept at full resolution for accurate crop-region framing) */
-int capture_yuv(void)
+int capture_img(void)
 {
   snapshot_in_progress = true;
   frame_ready = false;

@@ -72,7 +72,7 @@ typedef struct __attribute__((packed))
 typedef enum
 {
   CONFIG_MODE_WARMUP,
-  SEND_YUV_FRAME,
+  SEND_IMG_FRAME,
   RECEIVE_PIPES_CONFIG,
   SAVE_PIPES_CONFIG,
   SD_CARD_INIT,

@@ -474,7 +474,10 @@ class InteractiveCropView(QGraphicsView):
 
 class SerialWorker(QThread):
     line_received  = pyqtSignal(str)           # ligne printf du STM (journal)
-    image_received = pyqtSignal(object, str)   # numpy img, description
+    image_received = pyqtSignal(object, str)   # numpy img, description (capture 'S' à la demande)
+    movement_snapshot_received = pyqtSignal(object, str)  # idem, mais poussé
+                                                # sans demande par RECORD_MODE_INIT
+                                                # (mouvement détecté côté µC)
     capture_error  = pyqtSignal(str)
     config_result  = pyqtSignal(bool, str)     # success, message
     status         = pyqtSignal(str)
@@ -511,6 +514,8 @@ class SerialWorker(QThread):
         awaiting_ack = False         # attente de l'ack config
         saw_fail     = False         # au moins un 'F' reçu pendant l'attente
         ack_deadline = 0.0
+        pending      = bytearray()   # octets déjà lus mais pas encore traités
+                                      # (reste d'un chunk après un 0xAA non sollicité)
 
         while self._running:
             # 1) Commande en attente ?
@@ -547,11 +552,16 @@ class SerialWorker(QThread):
 
             # 2) Lecture continue : journalise les printf, détecte l'ack
             try:
-                data = ser.read(256)
+                data = pending + ser.read(256)
+                pending = bytearray()
             except Exception:
                 break
 
-            for byte in data:
+            i = 0
+            n = len(data)
+            while i < n:
+                byte = data[i]
+                i += 1
                 # ack config = octet isolé 'V'/'F' (hors d'une ligne de texte).
                 # Le µC peut envoyer un ou plusieurs 'F' (config pas encore
                 # prête) AVANT le 'V' final : seul 'V' valide, 'F' = on attend.
@@ -561,6 +571,14 @@ class SerialWorker(QThread):
                     else:                        # 'F' : pas encore, on continue
                         saw_fail = True
                     continue
+                # Snapshot non sollicité (RECORD_MODE_INIT, mouvement détecté) :
+                # même protocole 0xAA que la capture 'S', mais pas précédé
+                # d'une demande de notre part. Le reste du chunk déjà lu est
+                # transmis en "pending" (les octets qui suivent le 0xAA font
+                # déjà partie de la taille/du JPEG, il ne faut pas les perdre).
+                if len(line) == 0 and byte == 0xAA:
+                    pending = self._read_and_emit_snapshot(ser, bytearray(data[i:]), unsolicited=True)
+                    break
                 if byte == 0x0A:                 # \n : fin de ligne
                     text = line.decode('ascii', errors='replace').rstrip('\r')
                     line = bytearray()
@@ -584,62 +602,56 @@ class SerialWorker(QThread):
             pass
         self.port_opened.emit(False)
 
-    # ── Capture binaire (protocole 'S') ─────────────────────────────────────
-    def _do_capture(self, ser):
+    # ── Lecture d'un bloc de n octets, en piochant d'abord dans `leftover` ──
+    # (octets déjà lus dans un chunk précédent mais pas encore consommés)
+    # avant de compléter par ser.read(). Retourne (bytes_lus, leftover_restant).
+    @staticmethod
+    def _read_exact(ser, count, leftover):
+        buf = bytearray()
+        if leftover:
+            take = leftover[:count]
+            buf.extend(take)
+            del leftover[:len(take)]
+        remaining = count - len(buf)
+        if remaining > 0:
+            buf.extend(ser.read(remaining))
+        return bytes(buf), leftover
+
+    # ── Lit taille + JPEG + exposition/gain après un sync 0xAA déjà consommé,
+    # décode et émet image_received. Utilisé à la fois par la capture 'S' à la
+    # demande et par un snapshot non sollicité (mouvement détecté côté µC).
+    # `leftover` : octets du chunk courant déjà lus après le 0xAA (peut être
+    # vide). Retourne les octets en trop non consommés (normalement vide),
+    # à réinjecter dans la boucle principale au lieu d'être perdus.
+    # `unsolicited` : True pour un snapshot poussé par RECORD_MODE_INIT (émet
+    # movement_snapshot_received, pas image_received -- l'éditeur de crop de
+    # la config ne doit pas être perturbé par une image reçue sans demande).
+    def _read_and_emit_snapshot(self, ser, leftover, unsolicited=False):
+        old_timeout = ser.timeout
+        signal = self.movement_snapshot_received if unsolicited else self.image_received
         try:
-            ser.reset_input_buffer()
-            ser.write(b'S'); ser.flush()
-
-            # Sync 0xAA (capture + encodage JPEG : jusqu'à ~10 s).
-            # Avant le 0xAA, le µC peut émettre des printf (ex.
-            # "[FSM] frame captured: X KB") : on les journalise au lieu de les
-            # jeter.
-            ser.timeout = 2
-            deadline = time.time() + 10.0
-            got_sync = False
-            pre = bytearray()
-            while time.time() < deadline:
-                b = ser.read(1)
-                if not b:
-                    continue
-                if b == b'\xaa':
-                    got_sync = True
-                    break
-                c = b[0]
-                if c == 0x0A:
-                    text = pre.decode('ascii', errors='replace').rstrip('\r')
-                    pre = bytearray()
-                    if text:
-                        self.line_received.emit(text)
-                elif c != 0x0D:
-                    pre.append(c)
-            if not got_sync:
-                self.capture_error.emit(
-                    "timeout: no sync received (is the mcu in config mode?).")
-                return
-
             ser.timeout = 60
-            size_bytes = ser.read(4)
+            size_bytes, leftover = self._read_exact(ser, 4, leftover)
             if len(size_bytes) != 4:
                 self.capture_error.emit("failed to read the jpeg size.")
-                return
+                return leftover
             jpeg_size = int.from_bytes(size_bytes, 'little')
             if jpeg_size > 10_000_000:
                 self.capture_error.emit(f"invalid size: {jpeg_size} bytes.")
-                return
+                return leftover
 
             ser.timeout = 30
-            jpeg_data = ser.read(jpeg_size)
+            jpeg_data, leftover = self._read_exact(ser, jpeg_size, leftover)
             if len(jpeg_data) != jpeg_size:
                 self.capture_error.emit("incomplete jpeg data.")
-                return
+                return leftover
 
             exposure_us = 0
             gain_raw    = 0
-            b = ser.read(4)
+            b, leftover = self._read_exact(ser, 4, leftover)
             if len(b) == 4:
                 exposure_us = int.from_bytes(b, 'little')
-            b = ser.read(4)
+            b, leftover = self._read_exact(ser, 4, leftover)
             if len(b) == 4:
                 gain_raw = int.from_bytes(b, 'little')
 
@@ -649,19 +661,57 @@ class SerialWorker(QThread):
 
             if jpeg_data[:2] != b'\xff\xd8':
                 self.capture_error.emit("corrupted jpeg")
-                return
+                return leftover
 
             img_pil = Image.open(BytesIO(jpeg_data))
             img_np  = np.array(img_pil.convert("RGB"), dtype=np.uint8)
             desc = (f"exposure = {exposure_us} µs | gain = {gain_db:.1f} db "
                     f"(≈ ISO {iso_approx})")
-            self.image_received.emit(img_np, desc)
+            signal.emit(img_np, desc)
 
         except Exception as e:
             import traceback; traceback.print_exc()
             self.capture_error.emit(f"error: {e}")
         finally:
-            ser.timeout = 0.2         # rétablit le timeout de lecture continue
+            ser.timeout = old_timeout
+        return leftover
+
+    # ── Capture binaire (protocole 'S') ─────────────────────────────────────
+    def _do_capture(self, ser):
+        ser.reset_input_buffer()
+        ser.write(b'S'); ser.flush()
+
+        # Sync 0xAA (capture + encodage JPEG : jusqu'à ~10 s).
+        # Avant le 0xAA, le µC peut émettre des printf (ex.
+        # "[FSM] frame captured: X KB") : on les journalise au lieu de les
+        # jeter.
+        ser.timeout = 2
+        deadline = time.time() + 10.0
+        got_sync = False
+        pre = bytearray()
+        while time.time() < deadline:
+            b = ser.read(1)
+            if not b:
+                continue
+            if b == b'\xaa':
+                got_sync = True
+                break
+            c = b[0]
+            if c == 0x0A:
+                text = pre.decode('ascii', errors='replace').rstrip('\r')
+                pre = bytearray()
+                if text:
+                    self.line_received.emit(text)
+            elif c != 0x0D:
+                pre.append(c)
+        if not got_sync:
+            self.capture_error.emit(
+                "timeout: no sync received (is the mcu in config mode?).")
+            ser.timeout = 0.2
+            return
+
+        self._read_and_emit_snapshot(ser, bytearray())
+        ser.timeout = 0.2             # rétablit le timeout de lecture continue
 
 # =============================================================================
 #  Style (thème clair)
@@ -1132,6 +1182,7 @@ class MainWindow(QMainWindow):
         self._worker = SerialWorker(self._auto_port)
         self._worker.line_received.connect(self._log_stm)
         self._worker.image_received.connect(self._on_image_received)
+        self._worker.movement_snapshot_received.connect(self._on_movement_snapshot)
         self._worker.capture_error.connect(self._on_error)
         self._worker.config_result.connect(self._on_send_result)
         self._worker.status.connect(self._log)
@@ -1233,6 +1284,15 @@ class MainWindow(QMainWindow):
         self.display_stack.setCurrentWidget(self.crop_view)
         self._busy = False
         self._update_buttons()
+
+    def _on_movement_snapshot(self, img_np, desc):
+        """Snapshot poussé par le µC dès qu'un mouvement déclenche un
+        enregistrement (RECORD_MODE_INIT) -- affichage seul, ne touche pas à
+        l'état d'édition de la config (rectangles de crop, bouton Appliquer)
+        contrairement à _on_image_received (capture 'S' manuelle)."""
+        self.crop_view.set_image(img_np)
+        self.display_stack.setCurrentWidget(self.crop_view)
+        self._log(f"mouvement détecté — snapshot reçu ({desc})")
 
     # ── Appliquer / retirer la config (local) ─────────────────────────────────
 

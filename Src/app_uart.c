@@ -18,7 +18,7 @@
 
 /* Sends one encoded JPEG over UART:
  *   0xAA | length (4 B, little endian) | JPEG data | exposure (4 B) | gain (4 B) */
-void send_yuv_uart(const uint8_t *jpeg, int jpeg_len)
+void send_img_uart(const uint8_t *jpeg, int jpeg_len)
 {
 	uart_busy = true;
 

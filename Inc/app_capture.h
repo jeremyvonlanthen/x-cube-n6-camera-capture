@@ -11,5 +11,5 @@
  *               also switched to MONO (see CONFIG_MODE_WARMUP in app.c). */
 void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format, uint8_t two_pipes);
 /* One full-resolution MONO snapshot, JPEG-encoded into hires_jpeg_buffer. */
-int  capture_yuv(void);
+int  capture_img(void);
 #endif /* APP_CAPTURE_H */

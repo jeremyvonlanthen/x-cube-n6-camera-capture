@@ -16,6 +16,7 @@
 #include "app_jpg.h"
 #include "app_rec.h"
 #include "app_enc.h"
+#include "app_uart.h"
 #include "cmw_camera.h"
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_hal_dcmipp.h"
@@ -90,7 +91,7 @@ int record_snapshot_to_ram(int height)
   CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
                       width, height, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
-  /* One snapshot into buffer_full_frame (same flow as capture_yuv) */
+  /* One snapshot into buffer_full_frame (same flow as capture_img) */
   snapshot_in_progress = true;
   frame_ready = false;
   CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_SNAPSHOT, 0);
@@ -137,6 +138,13 @@ int record_snapshot_to_ram(int height)
 
   if (jpeg_len <= 0)
     printf("[REC] JPG encode failed (%d)\r\n", jpeg_len);
+  else
+    /* Unsolicited push to the GUI (same 0xAA-framed protocol as capture_img()
+     * / send_img_uart(), just not preceded by a GUI-sent 'S' this time): lets
+     * the user see, live, what triggered the movement detection. At 10 MBaud
+     * this blocks for well under a second even for a large JPEG -- no
+     * meaningful delay to the VIDEO_CAPTURE that follows. */
+    send_img_uart(hires_jpeg_buffer, jpeg_len);
 
   snapshot_jpeg_len = jpeg_len;
   return jpeg_len;

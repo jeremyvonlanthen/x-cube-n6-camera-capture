@@ -193,20 +193,20 @@ void app_run(void)
 			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1, 0);
 
 			printf("[FSM] wait to get config frame... (capturer une image)\r\n");
-			state = SEND_YUV_FRAME;
+			state = SEND_IMG_FRAME;
 			break;
 
-		case SEND_YUV_FRAME:
+		case SEND_IMG_FRAME:
 			uint8_t cmd = 0;
 			HAL_UART_Receive(&huart1, &cmd, 1, 100);
 
 			switch(cmd)
 			{
 			case 'S':
-				int jpeg_len = capture_yuv();
+				int jpeg_len = capture_img();
 				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
 				HAL_Delay(50);
-				send_yuv_uart(hires_jpeg_buffer, jpeg_len);
+				send_img_uart(hires_jpeg_buffer, jpeg_len);
 				break;
 
 			case 'T':
