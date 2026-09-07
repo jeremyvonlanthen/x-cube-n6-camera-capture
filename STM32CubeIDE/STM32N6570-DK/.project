@@ -62,6 +62,11 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_detect.c</locationURI>
 		</link>
 		<link>
+			<name>Src/app_enc.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_enc.c</locationURI>
+		</link>
+		<link>
 			<name>Src/app_flash_config.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_flash_config.c</locationURI>

@@ -150,6 +150,7 @@
 "./Src/app_capture.o"
 "./Src/app_cvt.o"
 "./Src/app_detect.o"
+"./Src/app_enc.o"
 "./Src/app_flash_config.o"
 "./Src/app_fuseprogramming.o"
 "./Src/app_jpg.o"

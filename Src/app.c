@@ -165,7 +165,7 @@ void app_run(void)
 
 	char timestamp[20];
 	char path[40];
-	int rec_files_height = 480; // 480, 720, 960, 1080 (max)
+	int rec_files_height = 960; // 480, 720, 960, 1080 (max)
 
 	bool is_img_to_save = false;
 	bool is_video_to_record = false;
@@ -347,7 +347,7 @@ void app_run(void)
 			//ajouter à l'avenir un contrôle // de mouvement avec le pipe0
 
 			setup_record_h264(rec_files_height);
-			record_h264_to_ram(rec_files_height, 30);
+			record_h264_to_ram(rec_files_height, 10);
 
 			sd_reinit_for_storage = true;
 			state = SD_CARD_INIT;

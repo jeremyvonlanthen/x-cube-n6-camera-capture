@@ -314,7 +314,7 @@ int record_h264_to_ram(int height, int rec_duration)
   last_frame_tick = start_tick;
 
   printf("[REC] video started %d ms after movement detection\r\n", (int)(start_tick - actual_ticks));
-  printf("[REC] capturing %d sec @ %d fps @ %dp to RAM...\r\n", rec_duration, H264_FPS, height);
+  printf("[REC] capturing %d sec to RAM... (@ %d fps @ %dp @ QF = %d)\r\n", rec_duration, H264_FPS, height, VIDEO_COMPRESSION_FACTOR);
 
   while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {
     if (!h264_frame_ready) {
@@ -358,7 +358,6 @@ int record_h264_to_ram(int height, int rec_duration)
     }
   }
   unsigned long encoding = 100*encode_ok_count/frame_count;
-  printf("[REC] capture %s: %.2lu%% encoding\r\n", encoding==100. ? "sucess" : "error", encoding);
 
   /* Encoded-size accounting: actual bitrate and RAM-store fill ratio for
    * this clip. Lets us measure on real footage how much headroom the ISP
@@ -369,14 +368,14 @@ int record_h264_to_ram(int height, int rec_duration)
    * to cost, not a fixed factor). */
   if (h264_ram_frame_count > 0) {
     uint32_t elapsed_ms = last_frame_tick - start_tick;
-    float elapsed_s = elapsed_ms / 1000.0f;
+    float used_mb = (float)h264_ram_used / (1024.0f * 1024.0f);
+    float store_total_mb = (float)H264_RAM_STORE_SIZE / (1024.0f * 1024.0f);
     float avg_mbps = elapsed_ms ? (h264_ram_used * 8.0f) / ((float)elapsed_ms * 1000.0f) : 0.0f;
     float store_fill_pct = 100.0f * (float)h264_ram_used / (float)H264_RAM_STORE_SIZE;
 
-    printf("[REC] encoded %lu KB / %lu frames in %.1f s -> avg %.2f Mbit/s | RAM store %.1f%% full (%lu/%lu frames)\r\n",
-           (unsigned long)(h264_ram_used / 1024), (unsigned long)h264_ram_frame_count, elapsed_s,
-           avg_mbps, store_fill_pct,
-           (unsigned long)h264_ram_frame_count, (unsigned long)H264_RAM_MAX_FRAMES);
+    printf("[REC] encoded %lu%% (%lu/%lu frames) | %.1f MB/%.1f MB (RAM store use: %.1f%%) | avg REC bitrate: %.2f Mbit/s\r\n",
+           encoding, (unsigned long)encode_ok_count, (unsigned long)frame_count,
+           used_mb, store_total_mb, store_fill_pct, avg_mbps);
   }
 
   /* Stop the capture->encode pipeline started by setup_record_h264(). */

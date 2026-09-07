@@ -357,7 +357,7 @@ static int rec_write_jpeg_file(const uint8_t *p_data, uint32_t len)
     return -1;
   }
 
-  printf("[REC] snapshot saved to %s (%lu KB)\r\n", fname, (unsigned long)len / 1024);
+  printf("[REC] snapshot saved to %s (%.1f KB)\r\n", fname, (float)len / 1024.0f);
   return 0;
 }
 
@@ -398,8 +398,8 @@ static void rec_task_fct(void *arg)
         mux = NULL;
       }
       f_truncate(&fil);  /* drop the f_expand preallocation tail */
-      printf("[REC] video saved to %s (%lu MB)\r\n",
-             rec_mp4_fname, (unsigned long)f_size(&fil) / (1024 * 1024));
+      printf("[REC] video saved to %s (%.1f MB)\r\n",
+             rec_mp4_fname, (float)f_size(&fil) / (1024.0f * 1024.0f));
       f_close(&fil);
       xSemaphoreGive(sem_stopped);
     }

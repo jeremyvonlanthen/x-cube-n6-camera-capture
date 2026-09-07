@@ -26,4 +26,12 @@
 /* Hardware JPEG encoder output buffer */
 #define MAX_JPEG_FRAME_SIZE    (1 * 1024 * 1024)
 
+/* H264 VBR compression factor: target encoded bits/pixel-frame, i.e.
+ * target_bitrate = width * height * VIDEO_COMPRESSION_FACTOR * fps / 30
+ * (see ENC_Init() in app_enc.c). Acts as an inverse compression ratio knob:
+ * lower = more compression (smaller files, more headroom in the 12 MB H264
+ * RAM store -- see H264_RAM_STORE_SIZE in app_record.c -- at the cost of
+ * quality); higher = less compression (better quality, larger files). */
+#define VIDEO_COMPRESSION_FACTOR 8
+
 #endif

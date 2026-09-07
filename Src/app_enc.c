@@ -16,6 +16,7 @@
  ******************************************************************************
  */
 #include "app_enc.h"
+#include "app_config.h"
 
 #include <assert.h>
 #include <stdio.h>
@@ -247,7 +248,7 @@ void ENC_Init(ENC_Conf_t *p_conf)
   /* setup rate ctrl */
   ret = H264EncGetRateCtrl(p_ctx->hdl, &rate);
   assert(ret == H264ENC_OK);
-  target_bitrate = ((p_conf->width * p_conf->height * 12) * p_conf->fps) / 30;
+  target_bitrate = ((p_conf->width * p_conf->height * VIDEO_COMPRESSION_FACTOR) * p_conf->fps) / 30;
   if (rate_ctrl_mode == VENC_RATE_CTRL_QP_CONSTANT)
   {
     VENC_SetupConstantQp(&rate, RATE_CTRL_QP);
