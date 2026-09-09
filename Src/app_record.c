@@ -500,11 +500,18 @@ static int json_pipe_result(char *buf, size_t bufsz, int n, const DETECT_PipeRes
 
   n = json_append(buf, bufsz, n,
                    "{\"mouvement\":{\"detecte\":%s,\"delta_max_frame_moins_1\":%u,\"delta_max_frame_moins_2\":%u},"
-                   "\"deviation_voisinage\":{\"detecte\":%s,\"pct_pipe\":%.2f,\"bbox_global\":",
+                   "\"deviation_voisinage\":{\"detecte\":%s,\"pct_pipe\":",
                    p->mouvement.detecte ? "true" : "false",
                    p->mouvement.delta_max_frame_moins_1, p->mouvement.delta_max_frame_moins_2,
-                   dv->detecte ? "true" : "false", (double)dv->pct_pipe);
+                   dv->detecte ? "true" : "false");
 
+  /* pct_pipe is NaN (0/0) when the pipe is sized 0x0 (crop/downsize
+   * misconfigured too small) -- report null rather than the literal "nan",
+   * which isn't valid JSON. */
+  n = isnan(dv->pct_pipe) ? json_append(buf, bufsz, n, "null")
+                          : json_append(buf, bufsz, n, "%.2f", (double)dv->pct_pipe);
+
+  n = json_append(buf, bufsz, n, ",\"bbox_global\":");
   n = dv->bbox_global_valid ? json_bbox(buf, bufsz, n, &dv->bbox_global) : json_append(buf, bufsz, n, "null");
 
   n = json_append(buf, bufsz, n, ",\"blocs\":[");

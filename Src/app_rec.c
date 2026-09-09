@@ -329,9 +329,9 @@ static int rec_write_access_unit(const uint8_t *p_data, uint32_t len, uint32_t d
 /* Filename for the next REC_SaveFile write, set by REC_SaveFile and consumed
  * by the SD writer task in rec_write_file (saving is sequential and blocks
  * the caller, so a single shared buffer is safe). */
-static char rec_save_fname[40] = "IMG_0001.JPG";
+static char rec_save_fname[48] = "IMG_0001.JPG";
 /* File name of the recording currently open, logged when it is finalized */
-static char rec_mp4_fname[40]  = "VID_0001.MP4";
+static char rec_mp4_fname[48]  = "VID_0001.MP4";
 
 /* Writes p_data to the file named rec_save_fname (SD writer task context). */
 static int rec_write_file(const uint8_t *p_data, uint32_t len)
@@ -339,7 +339,7 @@ static int rec_write_file(const uint8_t *p_data, uint32_t len)
   FRESULT res;
   FIL jf;
   UINT bw = 0;
-  char fname[40];
+  char fname[48];
 
   strncpy(fname, rec_save_fname, sizeof(fname) - 1);
   fname[sizeof(fname) - 1] = '\0';
@@ -545,7 +545,7 @@ int REC_Start(int width, int height, int fps, uint8_t *ring_buf, size_t ring_siz
 {
   MP4E_track_t track = { 0 };
   FRESULT res;
-  char name[40];
+  char name[48];
 
   if (rec_active || ring_buf == NULL || ring_size < 2u * REC_MAX_FRAME)
     return -1;

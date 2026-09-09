@@ -28,6 +28,7 @@
 
 #include "app.h"
 
+#include <math.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -150,6 +151,18 @@ void axisram_reset(void)
 static bool is_target_animal_detected(void)
 {
   return true; /* TODO */
+}
+
+/* Formats pct_pipe for the console log -- "N/A" instead of "nan%" when the
+ * pipe is sized 0x0 (see json_pipe_result() in app_record.c for the JSON
+ * equivalent). */
+static const char *pct_str(float pct, char *buf, size_t bufsz)
+{
+  if (isnan(pct))
+    snprintf(buf, bufsz, "N/A");
+  else
+    snprintf(buf, bufsz, "%.2f%%", (double)pct);
+  return buf;
 }
 
 /* ==========================================================================
@@ -320,9 +333,10 @@ void app_run(void)
 			if(DETECT_ProcessFrame(&detect_result)){
 				CMW_CAMERA_GetExposure(&detect_exposure);
 				CMW_CAMERA_GetGain(&detect_gain);
-				printf("[FSM] movement detected! (second plan: %.2f%%, premier plan: %.2f%%)\r\n",
-				       detect_result.second_plan.deviation_voisinage.pct_pipe,
-				       detect_result.premier_plan.deviation_voisinage.pct_pipe);
+				char pct1_buf[16], pct2_buf[16];
+				printf("[FSM] movement detected! (background: %s, foreground: %s)\r\n",
+				       pct_str(detect_result.second_plan.deviation_voisinage.pct_pipe, pct1_buf, sizeof(pct1_buf)),
+				       pct_str(detect_result.premier_plan.deviation_voisinage.pct_pipe, pct2_buf, sizeof(pct2_buf)));
 				actual_ticks = HAL_GetTick();
 				state = RECORD_MODE_INIT;
 				break;

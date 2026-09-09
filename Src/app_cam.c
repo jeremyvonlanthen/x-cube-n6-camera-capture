@@ -29,14 +29,16 @@
  * retry loop. */
 #define CAM_INIT_MAX_ATTEMPTS 5
 
-/* Define sensor orientation */
+/* Define sensor orientation. DIAS is a stationary wildlife camera, not a
+ * selfie application: IMX335 (the sensor actually mounted, see README) is
+ * fixed to CMW_MIRRORFLIP_NONE regardless of CAMERA_SELFY, which was
+ * mirroring every capture left/right. */
+#define SENSOR_IMX335_FLIP CMW_MIRRORFLIP_NONE
 #if CAMERA_SELFY == 1
-#define SENSOR_IMX335_FLIP CMW_MIRRORFLIP_MIRROR
 #define SENSOR_VD66GY_FLIP CMW_MIRRORFLIP_FLIP
 #define SENSOR_VD55G1_FLIP CMW_MIRRORFLIP_FLIP
 #define SENSOR_VD1943_FLIP CMW_MIRRORFLIP_MIRROR
 #else
-#define SENSOR_IMX335_FLIP CMW_MIRRORFLIP_NONE
 #define SENSOR_VD66GY_FLIP CMW_MIRRORFLIP_FLIP_MIRROR
 #define SENSOR_VD55G1_FLIP CMW_MIRRORFLIP_FLIP_MIRROR
 #define SENSOR_VD1943_FLIP CMW_MIRRORFLIP_NONE
