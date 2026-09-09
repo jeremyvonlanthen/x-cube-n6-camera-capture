@@ -33,10 +33,10 @@ static uint8_t  *detect_pipe1, *detect_pipe2;
 static uint8_t  *frame1_pipe1, *frame1_pipe2;
 static uint8_t  *frame2_pipe1, *frame2_pipe2;
 static uint8_t  *detect_mvt_pipe1, *detect_mvt_pipe2;
+static uint8_t  *voisin_count_pipe1, *voisin_count_pipe2; /* 0-9 per pixel, for extract_blocs() */
+static uint32_t *stack_pipe1, *stack_pipe2; /* flood-fill scratch, see extract_blocs() */
 
-/* Frames processed since the last calibration; gates the frame-diff
- * ("movement") sub-check in pixel_detection() until the running mean/std
- * have had a chance to settle (see pixel_detection below). */
+/* Frames since last calibration; gates the movement sub-check. */
 static uint8_t nb_capture;
 
 /* ==========================================================================
@@ -193,13 +193,14 @@ static void var_to_std(uint16_t *p_var, uint8_t *p_std, uint32_t size_pipe)
     }
 }
 
-/* Per-pixel detector: flags a pixel as "outlier" if it falls outside
- * [mean-std, mean+std] (p_tmp/p_dst, neighbour-count gated), and separately
- * flags "movement" via frame-to-frame differencing against the last two
- * frames (p_mvt) -- gated by nb_capture so it only arms once the running
- * mean/std have had a few post-calibration frames to settle. Either
- * sub-check can set *p_is_detect. */
-static void pixel_detection(uint8_t *p_src, uint8_t *p_frame1, uint8_t *p_frame2, uint8_t *p_mvt, uint8_t *p_tmp ,uint8_t *p_dst, uint8_t *p_mean, uint8_t *p_std, uint16_t height, uint16_t width, uint8_t nb_voisin, bool *p_is_detect, uint8_t *nb_capture_p)
+/* Flags outliers (p_dst, neighbour-count gated) and movement (frame diff,
+ * nb_capture gated). p_is_detect is shared/global across both pipes;
+ * p_is_detect_mouvement/p_is_detect_deviation are the same two sub-checks
+ * scoped to this call. p_voisin_count gets each pixel's 3x3 outlier count. */
+static void pixel_detection(uint8_t *p_src, uint8_t *p_frame1, uint8_t *p_frame2, uint8_t *p_mvt, uint8_t *p_tmp, uint8_t *p_dst,
+                             uint8_t *p_mean, uint8_t *p_std, uint16_t height, uint16_t width, uint8_t nb_voisin,
+                             uint8_t *p_voisin_count, bool *p_is_detect, bool *p_is_detect_mouvement,
+                             bool *p_is_detect_deviation, uint8_t *nb_capture_p)
 {
 	uint16_t row_stride = SENSOR_WIDTH;
 
@@ -217,7 +218,7 @@ static void pixel_detection(uint8_t *p_src, uint8_t *p_frame1, uint8_t *p_frame2
 
 		uint8x16_t one  = vdupq_n_u8(MAX_GREY);
 		uint8x16_t zero = vdupq_n_u8(0);
-		uint8x16_t thresh_mvt = vdupq_n_u8(75);
+		uint8x16_t thresh_mvt = vdupq_n_u8(DETECT_THRESH_MVT);
 
 		for (int col = 0; col < width; col += 16)
 		{
@@ -248,7 +249,7 @@ static void pixel_detection(uint8_t *p_src, uint8_t *p_frame1, uint8_t *p_frame2
 			mve_pred16_t cmp2_mvt = vcmpcsq_m_u8(diff_2, thresh_mvt, p);
 
 			mve_pred16_t detected_mvt = (mve_pred16_t)(cmp1_mvt | cmp2_mvt);
-			if(detected_mvt && *nb_capture_p>=34) *p_is_detect = true;
+			if(detected_mvt && *nb_capture_p>=34) { *p_is_detect = true; *p_is_detect_mouvement = true; }
 			uint8x16_t result_mvt = vpselq_u8(one, zero, detected_mvt);
 
 
@@ -260,6 +261,7 @@ static void pixel_detection(uint8_t *p_src, uint8_t *p_frame1, uint8_t *p_frame2
 	}
 
 	memset(p_dst, 0, height * width);
+	memset(p_voisin_count, 0, height * width);
 	for(int row = 1; row < height-1; row++)
 	{
 		for(int col = 1; col < width-1; col++)
@@ -270,21 +272,146 @@ static void pixel_detection(uint8_t *p_src, uint8_t *p_frame1, uint8_t *p_frame2
 							 	 	   p_tmp[row*width + col-1] + p_tmp[row*width + col] + p_tmp[row*width + col+1] +
 									   p_tmp[(row+1)*width + col-1] + p_tmp[(row+1)*width + col] + p_tmp[(row+1)*width + col+1];
 
+			p_voisin_count[row*width + col] = (uint8_t)(count / MAX_GREY);
+
 			if(count>nb_voisin*MAX_GREY)
 			{
 				p_dst[row*width + col] = MAX_GREY;
 				*p_is_detect = true;
+				*p_is_detect_deviation = true;
 			}
 		}
 	}
 }
 
-/* Slowly drifts the running mean/std toward the current frame at
- * non-detected pixels (detected ones are left alone, so a lingering
- * object doesn't get absorbed into the background). */
+/* Max |src-frame| over the pipe. Must run before pixel_detection() ages
+ * frame1/frame2 in place. Plain scalar, separate from the MVE hot path. */
+static void compute_max_deltas(const uint8_t *p_src, const uint8_t *p_frame1, const uint8_t *p_frame2,
+                                uint16_t height, uint16_t width,
+                                uint8_t *p_delta_max_1, uint8_t *p_delta_max_2)
+{
+	uint16_t row_stride = SENSOR_WIDTH;
+	uint8_t max1 = 0, max2 = 0;
+
+	for (int row = 0; row < height; row++)
+	{
+		const uint8_t *row_src = &p_src[row * row_stride];
+		const uint8_t *row_f1 = &p_frame1[row * width];
+		const uint8_t *row_f2 = &p_frame2[row * width];
+
+		for (int col = 0; col < width; col++)
+		{
+			uint8_t d1 = (row_src[col] > row_f1[col]) ? (uint8_t)(row_src[col] - row_f1[col]) : (uint8_t)(row_f1[col] - row_src[col]);
+			uint8_t d2 = (row_src[col] > row_f2[col]) ? (uint8_t)(row_src[col] - row_f2[col]) : (uint8_t)(row_f2[col] - row_src[col]);
+			if (d1 > max1) max1 = d1;
+			if (d2 > max2) max2 = d2;
+		}
+	}
+
+	*p_delta_max_1 = max1;
+	*p_delta_max_2 = max2;
+}
+
+/* 8-connected component labelling via iterative flood-fill. p_visited is
+ * scratch (caller passes detect_tmp_pipeN -- its content from this frame's
+ * pixel_detection() is dead by now). p_stack is a worst-case size_pipeN
+ * index stack, allocated once in DETECT_Init(). Components beyond
+ * DETECT_MAX_BLOCS still get flood-filled (and count toward bbox_global)
+ * but aren't added to blocs[]. */
+static void extract_blocs(const uint8_t *p_dst, const uint8_t *p_src, const uint8_t *p_mean, const uint8_t *p_std,
+                           const uint8_t *p_voisin_count, uint8_t *p_visited, uint32_t *p_stack,
+                           uint16_t height, uint16_t width, DETECT_DeviationVoisinage_t *p_out)
+{
+	uint16_t row_stride = SENSOR_WIDTH; /* p_src is the raw capture buffer (SENSOR_WIDTH stride) */
+	uint32_t size = (uint32_t)height * width;
+
+	memset(p_visited, 0, size);
+	p_out->bbox_global_valid = false;
+	p_out->nb_blocs = 0;
+
+	for (uint32_t start = 0; start < size; start++)
+	{
+		if (p_dst[start] != MAX_GREY || p_visited[start])
+			continue;
+
+		uint32_t x_min = start % width, x_max = x_min;
+		uint32_t y_min = start / width, y_max = y_min;
+		uint32_t sum_valeur = 0, sum_mean = 0, sum_std = 0, sum_voisin = 0, n = 0;
+		uint32_t sp = 0;
+
+		p_stack[sp++] = start;
+		p_visited[start] = 1;
+
+		while (sp > 0)
+		{
+			uint32_t idx = p_stack[--sp];
+			uint32_t row = idx / width, col = idx % width;
+
+			if (col < x_min) x_min = col;
+			if (col > x_max) x_max = col;
+			if (row < y_min) y_min = row;
+			if (row > y_max) y_max = row;
+
+			sum_valeur += p_src[row * row_stride + col];
+			sum_mean   += p_mean[idx];
+			sum_std    += p_std[idx];
+			sum_voisin += p_voisin_count[idx];
+			n++;
+
+			for (int dr = -1; dr <= 1; dr++)
+			{
+				for (int dc = -1; dc <= 1; dc++)
+				{
+					if (dr == 0 && dc == 0) continue;
+
+					int nr = (int)row + dr, nc = (int)col + dc;
+					if (nr < 0 || nr >= height || nc < 0 || nc >= width) continue;
+
+					uint32_t nidx = (uint32_t)nr * width + nc;
+					if (p_dst[nidx] == MAX_GREY && !p_visited[nidx])
+					{
+						p_visited[nidx] = 1;
+						p_stack[sp++] = nidx;
+					}
+				}
+			}
+		}
+
+		if (!p_out->bbox_global_valid)
+		{
+			p_out->bbox_global.x_min = (uint16_t)x_min;
+			p_out->bbox_global.y_min = (uint16_t)y_min;
+			p_out->bbox_global.x_max = (uint16_t)x_max;
+			p_out->bbox_global.y_max = (uint16_t)y_max;
+			p_out->bbox_global_valid = true;
+		}
+		else
+		{
+			if (x_min < p_out->bbox_global.x_min) p_out->bbox_global.x_min = (uint16_t)x_min;
+			if (y_min < p_out->bbox_global.y_min) p_out->bbox_global.y_min = (uint16_t)y_min;
+			if (x_max > p_out->bbox_global.x_max) p_out->bbox_global.x_max = (uint16_t)x_max;
+			if (y_max > p_out->bbox_global.y_max) p_out->bbox_global.y_max = (uint16_t)y_max;
+		}
+
+		if (p_out->nb_blocs < DETECT_MAX_BLOCS)
+		{
+			DETECT_Bloc_t *b = &p_out->blocs[p_out->nb_blocs++];
+			b->bbox.x_min = (uint16_t)x_min;
+			b->bbox.y_min = (uint16_t)y_min;
+			b->bbox.x_max = (uint16_t)x_max;
+			b->bbox.y_max = (uint16_t)y_max;
+			b->valeur_moyenne  = (float)sum_valeur / (float)n;
+			b->mean_moyen      = (float)sum_mean   / (float)n;
+			b->std_moyen       = (float)sum_std    / (float)n;
+			b->nb_voisin_moyen = (float)sum_voisin / (float)n;
+		}
+	}
+}
+
+/* Drifts running mean/std toward the current frame at non-detected pixels. */
 static void stat_adjustment(uint8_t *p_src, uint8_t *p_detect, uint8_t *p_mean, uint16_t *p_var, uint8_t *p_std, uint16_t height, uint16_t width)
 {
-	float stat_adjust_ratio = 1.0f/(0.2f*60.0f);
+	float stat_adjust_ratio = DETECT_STAT_ADJUST_RATIO;
 	uint16_t row_stride = SENSOR_WIDTH;
 
 	for (int row = 0; row < height; row++)
@@ -311,8 +438,7 @@ static void stat_adjustment(uint8_t *p_src, uint8_t *p_detect, uint8_t *p_mean, 
 	}
 }
 
-/* Fraction (0-100) of p_detect's pixels flagged MAX_GREY, i.e. how much of
- * this pipe's frame the detector (post neighbour-count filtering) flagged. */
+/* Fraction (0-100) of p_detect's pixels flagged MAX_GREY. */
 static float detect_percentage(const uint8_t *p_detect, uint32_t size)
 {
   uint32_t count = 0;
@@ -356,6 +482,10 @@ void DETECT_Init(void)
   frame2_pipe2     = (uint8_t  *)axisram_alloc(size_pipe2);
   detect_mvt_pipe1 = (uint8_t  *)axisram_alloc(size_pipe1);
   detect_mvt_pipe2 = (uint8_t  *)axisram_alloc(size_pipe2);
+  voisin_count_pipe1 = (uint8_t *)axisram_alloc(size_pipe1);
+  voisin_count_pipe2 = (uint8_t *)axisram_alloc(size_pipe2);
+  stack_pipe1 = (uint32_t *)axisram_alloc(size_pipe1 * 4);
+  stack_pipe2 = (uint32_t *)axisram_alloc(size_pipe2 * 4);
 
   nb_capture = 0;
 }
@@ -386,24 +516,48 @@ void DETECT_CalibrateStats(void)
   nb_capture++;
 }
 
-bool DETECT_ProcessFrame(float *pct_pipe1, float *pct_pipe2)
+bool DETECT_ProcessFrame(DETECT_Result_t *p_result)
 {
   bool is_detect = false;
+  bool is_detect_mvt_1 = false, is_detect_dev_1 = false;
+  bool is_detect_mvt_2 = false, is_detect_dev_2 = false;
 
   if(capture_detect_frame() != 0)
     return false;
 
+  compute_max_deltas(buffer_pipe1_capture, frame1_pipe1, frame2_pipe1, height_pipe1, width_pipe1,
+                      &p_result->second_plan.mouvement.delta_max_frame_moins_1,
+                      &p_result->second_plan.mouvement.delta_max_frame_moins_2);
+  compute_max_deltas(buffer_pipe2_capture, frame1_pipe2, frame2_pipe2, height_pipe2, width_pipe2,
+                      &p_result->premier_plan.mouvement.delta_max_frame_moins_1,
+                      &p_result->premier_plan.mouvement.delta_max_frame_moins_2);
+
   pixel_detection(buffer_pipe1_capture, frame1_pipe1, frame2_pipe1, detect_mvt_pipe1, detect_tmp_pipe1,
-                   detect_pipe1, mean_pipe1, std_pipe1, height_pipe1, width_pipe1, 3, &is_detect, &nb_capture);
+                   detect_pipe1, mean_pipe1, std_pipe1, height_pipe1, width_pipe1, DETECT_NB_VOISIN_PIPE1,
+                   voisin_count_pipe1, &is_detect, &is_detect_mvt_1, &is_detect_dev_1, &nb_capture);
   stat_adjustment(buffer_pipe1_capture, detect_pipe1, mean_pipe1, var_pipe1, std_pipe1, height_pipe1, width_pipe1);
-  *pct_pipe1 = detect_percentage(detect_pipe1, size_pipe1);
+
+  p_result->second_plan.mouvement.detecte = is_detect_mvt_1;
+  p_result->second_plan.deviation_voisinage.detecte = is_detect_dev_1;
+  p_result->second_plan.deviation_voisinage.pct_pipe = detect_percentage(detect_pipe1, size_pipe1);
+
+  extract_blocs(detect_pipe1, buffer_pipe1_capture, mean_pipe1, std_pipe1, voisin_count_pipe1,
+                detect_tmp_pipe1, stack_pipe1, height_pipe1, width_pipe1, &p_result->second_plan.deviation_voisinage);
 
   pixel_detection(buffer_pipe2_capture, frame1_pipe2, frame2_pipe2, detect_mvt_pipe2, detect_tmp_pipe2,
-                   detect_pipe2, mean_pipe2, std_pipe2, height_pipe2, width_pipe2, 2, &is_detect, &nb_capture);
+                   detect_pipe2, mean_pipe2, std_pipe2, height_pipe2, width_pipe2, DETECT_NB_VOISIN_PIPE2,
+                   voisin_count_pipe2, &is_detect, &is_detect_mvt_2, &is_detect_dev_2, &nb_capture);
   stat_adjustment(buffer_pipe2_capture, detect_pipe2, mean_pipe2, var_pipe2, std_pipe2, height_pipe2, width_pipe2);
-  *pct_pipe2 = detect_percentage(detect_pipe2, size_pipe2);
+
+  p_result->premier_plan.mouvement.detecte = is_detect_mvt_2;
+  p_result->premier_plan.deviation_voisinage.detecte = is_detect_dev_2;
+  p_result->premier_plan.deviation_voisinage.pct_pipe = detect_percentage(detect_pipe2, size_pipe2);
+
+  extract_blocs(detect_pipe2, buffer_pipe2_capture, mean_pipe2, std_pipe2, voisin_count_pipe2,
+                detect_tmp_pipe2, stack_pipe2, height_pipe2, width_pipe2, &p_result->premier_plan.deviation_voisinage);
 
   if(nb_capture < 34) nb_capture++;
 
   return is_detect;
 }
+

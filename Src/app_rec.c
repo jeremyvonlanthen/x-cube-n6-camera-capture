@@ -95,16 +95,16 @@ static volatile size_t ring_free;
 typedef enum {
   REC_MSG_FRAME = 0,
   REC_MSG_STOP,
-  REC_MSG_JPEG,            /* write a JPEG snapshot file (ptr/len) */
+  REC_MSG_SAVE_FILE,       /* write an arbitrary buffer to a file (ptr/len) */
 } rec_msg_type_t;
 
 typedef struct {
   rec_msg_type_t type;
   uint32_t       offset;   /* frame start in rec_ring */
-  uint32_t       len;      /* frame length (or JPEG length) */
+  uint32_t       len;      /* frame length (or file length) */
   uint32_t       waste;    /* wasted tail bytes to credit back on release */
   uint32_t       duration; /* frame duration in 1/90000 s (0 = nominal) */
-  const uint8_t *ptr;      /* JPEG data (REC_MSG_JPEG only) */
+  const uint8_t *ptr;      /* file data (REC_MSG_SAVE_FILE only) */
 } rec_msg_t;
 
 static StaticTask_t  rec_task_tcb;
@@ -156,7 +156,7 @@ static unsigned frame_duration;   /* in MP4_TIMESCALE units */
 static bool  rec_error;
 static volatile bool rec_active;
 
-static volatile int jpeg_result;  /* REC_MSG_JPEG outcome (SD task -> caller) */
+static volatile int save_file_result;  /* REC_MSG_SAVE_FILE outcome (SD task -> caller) */
 
 
 /* ------------------------------------------------------------------------ */
@@ -326,38 +326,38 @@ static int rec_write_access_unit(const uint8_t *p_data, uint32_t len, uint32_t d
   return 0;
 }
 
-/* Filename for the next JPEG, set by REC_SaveJpeg and consumed by the SD
- * writer task in rec_write_jpeg_file (JPEG saving is sequential and blocks the
- * caller, so a single shared buffer is safe). */
-static char rec_jpeg_fname[40] = "IMG_0001.JPG";
+/* Filename for the next REC_SaveFile write, set by REC_SaveFile and consumed
+ * by the SD writer task in rec_write_file (saving is sequential and blocks
+ * the caller, so a single shared buffer is safe). */
+static char rec_save_fname[40] = "IMG_0001.JPG";
 /* File name of the recording currently open, logged when it is finalized */
 static char rec_mp4_fname[40]  = "VID_0001.MP4";
 
-/* Writes p_data to the file named rec_jpeg_fname (SD writer task context). */
-static int rec_write_jpeg_file(const uint8_t *p_data, uint32_t len)
+/* Writes p_data to the file named rec_save_fname (SD writer task context). */
+static int rec_write_file(const uint8_t *p_data, uint32_t len)
 {
   FRESULT res;
   FIL jf;
   UINT bw = 0;
   char fname[40];
 
-  strncpy(fname, rec_jpeg_fname, sizeof(fname) - 1);
+  strncpy(fname, rec_save_fname, sizeof(fname) - 1);
   fname[sizeof(fname) - 1] = '\0';
 
   res = f_open(&jf, fname, FA_WRITE | FA_CREATE_NEW);
   if (res != FR_OK) {
-    printf("[REC] jpeg f_open('%s') failed (%d)\r\n", fname, res);
+    printf("[REC] f_open('%s') failed (%d)\r\n", fname, res);
     return -1;
   }
 
   res = f_write(&jf, p_data, (UINT)len, &bw);
   f_close(&jf);
   if (res != FR_OK || bw != (UINT)len) {
-    printf("[REC] jpeg f_write err=%d bw=%u/%lu\r\n", res, bw, (unsigned long)len);
+    printf("[REC] f_write('%s') err=%d bw=%u/%lu\r\n", fname, res, bw, (unsigned long)len);
     return -1;
   }
 
-  printf("[REC] snapshot saved to %s (%.1f KB)\r\n", fname, (float)len / 1024.0f);
+  printf("[REC] file saved to %s (%.1f KB)\r\n", fname, (float)len / 1024.0f);
   return 0;
 }
 
@@ -384,9 +384,9 @@ static void rec_task_fct(void *arg)
       ring_free += msg.len + msg.waste;
       taskEXIT_CRITICAL();
     }
-    else if (msg.type == REC_MSG_JPEG) {
-      jpeg_result = rec_write_jpeg_file(msg.ptr, msg.len);
-      xSemaphoreGive(sem_stopped);  /* wakes up REC_SaveJpeg */
+    else if (msg.type == REC_MSG_SAVE_FILE) {
+      save_file_result = rec_write_file(msg.ptr, msg.len);
+      xSemaphoreGive(sem_stopped);  /* wakes up REC_SaveFile */
     }
     else { /* REC_MSG_STOP: finalize file */
       if (mux != NULL) {
@@ -688,21 +688,21 @@ int REC_Stop(void)
   return rec_error ? -1 : 0;
 }
 
-int REC_SaveJpeg(const uint8_t *p_data, size_t len, const char *fname)
+int REC_SaveFile(const uint8_t *p_data, size_t len, const char *fname)
 {
   rec_msg_t msg;
 
   if (rec_active || p_data == NULL || len == 0)
     return -1;
 
-  /* Store the target filename for the SD writer task (rec_write_jpeg_file).
+  /* Store the target filename for the SD writer task (rec_write_file).
    * Fall back to a default if none was provided. */
   if (fname != NULL && fname[0] != '\0') {
-    strncpy(rec_jpeg_fname, fname, sizeof(rec_jpeg_fname) - 1);
-    rec_jpeg_fname[sizeof(rec_jpeg_fname) - 1] = '\0';
+    strncpy(rec_save_fname, fname, sizeof(rec_save_fname) - 1);
+    rec_save_fname[sizeof(rec_save_fname) - 1] = '\0';
   }
 
-  msg.type     = REC_MSG_JPEG;
+  msg.type     = REC_MSG_SAVE_FILE;
   msg.offset   = 0;
   msg.len      = (uint32_t)len;
   msg.waste    = 0;
@@ -711,9 +711,9 @@ int REC_SaveJpeg(const uint8_t *p_data, size_t len, const char *fname)
   xQueueSend(q_filled, &msg, portMAX_DELAY);
 
   /* The SD writer task performs the write; block until the file is closed
-   * (sem_stopped doubles as a generic completion semaphore: JPEG saving
+   * (sem_stopped doubles as a generic completion semaphore: file saving
    * and video stop never overlap, both are driven by the same caller). */
   xSemaphoreTake(sem_stopped, portMAX_DELAY);
 
-  return jpeg_result;
+  return save_file_result;
 }

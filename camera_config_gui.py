@@ -1292,7 +1292,6 @@ class MainWindow(QMainWindow):
         contrairement à _on_image_received (capture 'S' manuelle)."""
         self.crop_view.set_image(img_np)
         self.display_stack.setCurrentWidget(self.crop_view)
-        self._log(f"mouvement détecté — snapshot reçu ({desc})")
 
     # ── Appliquer / retirer la config (local) ─────────────────────────────────
 

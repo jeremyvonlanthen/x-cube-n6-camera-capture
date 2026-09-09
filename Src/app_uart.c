@@ -7,7 +7,6 @@
 #include "app_uart.h"
 #include "app_shared.h"
 
-#include "cmw_camera.h"
 #include "stm32n6xx_hal.h"
 
 #define UART_TX_CHUNK_SIZE    32768
@@ -18,7 +17,7 @@
 
 /* Sends one encoded JPEG over UART:
  *   0xAA | length (4 B, little endian) | JPEG data | exposure (4 B) | gain (4 B) */
-void send_img_uart(const uint8_t *jpeg, int jpeg_len)
+void send_img_uart(const uint8_t *jpeg, int jpeg_len, int32_t exposure_us, int32_t gain_mdb)
 {
 	uart_busy = true;
 
@@ -26,8 +25,6 @@ void send_img_uart(const uint8_t *jpeg, int jpeg_len)
   uint8_t size_buf[4];
   const uint8_t *src = jpeg;
   int remaining = jpeg_len;
-  int32_t exposure = 0;
-  int32_t gain = 0;
 
   if (jpeg_len <= 0)
     return;
@@ -47,11 +44,8 @@ void send_img_uart(const uint8_t *jpeg, int jpeg_len)
     remaining -= chunk;
   }
 
-  CMW_CAMERA_GetExposure(&exposure);
-  HAL_UART_Transmit(&huart1, (uint8_t *)&exposure, sizeof(exposure), HAL_MAX_DELAY);
-
-  CMW_CAMERA_GetGain(&gain);
-  HAL_UART_Transmit(&huart1, (uint8_t *)&gain, sizeof(gain), HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)&exposure_us, sizeof(exposure_us), HAL_MAX_DELAY);
+  HAL_UART_Transmit(&huart1, (uint8_t *)&gain_mdb, sizeof(gain_mdb), HAL_MAX_DELAY);
 
   uart_busy = false;
 }

@@ -1,10 +1,15 @@
 #ifndef APP_RECORD_H
 #define APP_RECORD_H
+
+#include "app_detect.h" /* DETECT_Result_t */
+#include "app_shared.h" /* Config_t */
+
 /* MONO JPEG snapshot into hires_jpeg_buffer (no SD access). Call in
  * RECORD_MODE_INIT.
  * height: 4:3 photo height (width derived), up to the sensor full resolution.
+ * exposure_us/gain_mdb: forwarded to send_img_uart() (read once upstream).
  * Returns the encoded length (> 0), or <= 0 on failure. */
-int record_snapshot_to_ram(int height);
+int record_snapshot_to_ram(int height, int32_t exposure_us, int32_t gain_mdb);
 /* Writes the JPEG captured by record_snapshot_to_ram() into fname on the SD
  * card. Call in MULTIMEDIA_STORAGE, once SD_CARD_INIT has succeeded.
  * Returns 0 on success. */
@@ -23,4 +28,12 @@ int record_h264_to_ram(int height, int rec_duration);
  * the SD card. Call in MULTIMEDIA_STORAGE, once SD_CARD_INIT has succeeded.
  * Returns 0 on success. */
 int record_h264_flush_to_sd(const char *fname);
+/* Serializes p_result + the pipe/threshold/resolution config as JSON and
+ * writes it to fname on the SD card (via REC_SaveFile). Call in
+ * MULTIMEDIA_STORAGE, once SD_CARD_INIT has succeeded. Returns 0 on
+ * success. */
+int record_detection_json_to_sd(const char *fname, const char *det_timestamp,
+                                 const DETECT_Result_t *p_result, const Config_t *p_config,
+                                 int rec_height,
+                                 int32_t exposure_us, int32_t gain_mdb);
 #endif /* APP_RECORD_H */

@@ -39,6 +39,7 @@
 #include "app_uart.h"
 #include "app_capture.h"
 #include "app_cam.h"
+#include "cmw_camera.h"
 #include "app_detect.h"
 #include "app_flash_config.h"
 #include "app_pipes.h"
@@ -164,13 +165,15 @@ void app_run(void)
 	#endif
 
 	char timestamp[20];
-	char path[40];
+	char path[48]; // timestamp (19) + "/_config-sys_data-det.json" (26) + '\0'
 	int rec_files_height = 960; // 480, 720, 960, 1080 (max)
 
 	bool is_img_to_save = false;
 	bool is_video_to_record = false;
 	bool sd_reinit_for_storage = false;
 	bool config_already_saved = false;
+	DETECT_Result_t detect_result = {0};
+	int32_t detect_exposure = 0, detect_gain = 0;
 
 	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
 		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
@@ -206,7 +209,10 @@ void app_run(void)
 				int jpeg_len = capture_img();
 				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
 				HAL_Delay(50);
-				send_img_uart(hires_jpeg_buffer, jpeg_len);
+				int32_t cap_exposure = 0, cap_gain = 0;
+				CMW_CAMERA_GetExposure(&cap_exposure);
+				CMW_CAMERA_GetGain(&cap_gain);
+				send_img_uart(hires_jpeg_buffer, jpeg_len, cap_exposure, cap_gain);
 				break;
 
 			case 'T':
@@ -311,10 +317,12 @@ void app_run(void)
 				break;
 			}
 
-			float detect_pct_pipe1 = 0.0f, detect_pct_pipe2 = 0.0f;
-			if(DETECT_ProcessFrame(&detect_pct_pipe1, &detect_pct_pipe2)){
-				printf("[FSM] movement detected! (second plan: %.1f%%, premier plan: %.1f%%)\r\n",
-				       detect_pct_pipe1, detect_pct_pipe2);
+			if(DETECT_ProcessFrame(&detect_result)){
+				CMW_CAMERA_GetExposure(&detect_exposure);
+				CMW_CAMERA_GetGain(&detect_gain);
+				printf("[FSM] movement detected! (second plan: %.2f%%, premier plan: %.2f%%)\r\n",
+				       detect_result.second_plan.deviation_voisinage.pct_pipe,
+				       detect_result.premier_plan.deviation_voisinage.pct_pipe);
 				actual_ticks = HAL_GetTick();
 				state = RECORD_MODE_INIT;
 				break;
@@ -326,7 +334,7 @@ void app_run(void)
 
 		case RECORD_MODE_INIT:
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
-			record_snapshot_to_ram(rec_files_height);
+			record_snapshot_to_ram(rec_files_height, detect_exposure, detect_gain);
 
 			/* is_target_animal_detected() picks the primary format (MP4 if
 			 * true, JPEG if false); RECORD_JPEG_AND_MP4 force-saves the other
@@ -347,7 +355,7 @@ void app_run(void)
 			//ajouter à l'avenir un contrôle // de mouvement avec le pipe0
 
 			setup_record_h264(rec_files_height);
-			record_h264_to_ram(rec_files_height, 10);
+			record_h264_to_ram(rec_files_height, VIDEO_DURATION_S);
 
 			sd_reinit_for_storage = true;
 			state = SD_CARD_INIT;
@@ -357,14 +365,19 @@ void app_run(void)
 			REC_MakeDir(timestamp);
 
 			if(is_img_to_save){
-				snprintf(path, sizeof(path), "%s/image.jpeg", timestamp);
+				snprintf(path, sizeof(path), "%s/non-identifie.jpeg", timestamp);
 				if(record_snapshot_flush_to_sd(path) != 0) printf("[REC] snapshot save FAILED\r\n");
 			}
 
 			if(is_video_to_record){
-				snprintf(path, sizeof(path), "%s/video.mp4", timestamp);
+				snprintf(path, sizeof(path), "%s/non-identifie.mp4", timestamp);
 				if(record_h264_flush_to_sd(path) != 0) printf("[REC] video save FAILED\r\n");
 			}
+
+			snprintf(path, sizeof(path), "%s/_config-sys_data-det.json", timestamp);
+			if(record_detection_json_to_sd(path, timestamp, &detect_result, &config_py, rec_files_height,
+			                                detect_exposure, detect_gain) != 0)
+				printf("[REC] json save FAILED\r\n");
 
 			SD_PowerDown();
 			state = DETECT_MODE_WARMUP;

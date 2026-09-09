@@ -10,6 +10,8 @@
 #include "utils.h"
 
 #include <assert.h>
+#include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <string.h>
 #include "app_cam.h"
@@ -74,8 +76,10 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
  * record_snapshot_flush_to_sd() writes it out once the card is mounted.
  * Called in RECORD_MODE_INIT.
  *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res).
+ *   exposure_us/gain_mdb : forwarded to send_img_uart() as-is (read once by
+ *     the caller, avoids a redundant CMW_CAMERA_GetExposure/GetGain here).
  * Returns the encoded length (> 0), or <= 0 on capture/encode failure. */
-int record_snapshot_to_ram(int height)
+int record_snapshot_to_ram(int height, int32_t exposure_us, int32_t gain_mdb)
 {
   int width = height * 4 / 3;      /* 4:3, full-scene downscale from sensor */
   int jpeg_len;
@@ -117,12 +121,6 @@ int record_snapshot_to_ram(int height)
    * "ret == HAL_OK" assert in DCMIPP_PipeInitCapture (app_cam.c). */
   vTaskDelay(pdMS_TO_TICKS(50));
 
-  {
-    int32_t je = 0, jg = 0;
-    CMW_CAMERA_GetExposure(&je);
-    CMW_CAMERA_GetGain(&jg);
-  }
-
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
 
   /* Hardware JPEG encode: pipe1 was switched to width x height above */
@@ -144,14 +142,14 @@ int record_snapshot_to_ram(int height)
      * the user see, live, what triggered the movement detection. At 10 MBaud
      * this blocks for well under a second even for a large JPEG -- no
      * meaningful delay to the VIDEO_CAPTURE that follows. */
-    send_img_uart(hires_jpeg_buffer, jpeg_len);
+    send_img_uart(hires_jpeg_buffer, jpeg_len, exposure_us, gain_mdb);
 
   snapshot_jpeg_len = jpeg_len;
   return jpeg_len;
 }
 
 /* Writes the JPEG captured by record_snapshot_to_ram() to fname on the SD
- * card, through REC_SaveJpeg (FreeRTOS SD writer task). Called in
+ * card, through REC_SaveFile (FreeRTOS SD writer task). Called in
  * MULTIMEDIA_STORAGE, once SD_CARD_INIT has succeeded.
  * Returns 0 on success. */
 int record_snapshot_flush_to_sd(const char *fname)
@@ -159,7 +157,7 @@ int record_snapshot_flush_to_sd(const char *fname)
   if (snapshot_jpeg_len <= 0)
     return -1;
 
-  return REC_SaveJpeg(hires_jpeg_buffer, (size_t)snapshot_jpeg_len, fname);
+  return REC_SaveFile(hires_jpeg_buffer, (size_t)snapshot_jpeg_len, fname);
 }
 
 /* Prepares the camera for H264 recording: reconfigures to (height*4/3) x height
@@ -459,5 +457,115 @@ int record_h264_flush_to_sd(const char *fname)
     printf("[REC] mp4 finalize failed\r\n");
 
   return ret;
+}
+
+/* ==========================================================================
+ * Detection JSON export
+ * ========================================================================== */
+
+/* snprintf-style append: n tracks the logical write position, safe past the
+ * end of buf (writes get truncated/dropped, n keeps growing so callers can
+ * detect overflow at the end). */
+static int json_append(char *buf, size_t bufsz, int n, const char *fmt, ...)
+{
+  size_t off = ((size_t)n < bufsz) ? (size_t)n : bufsz;
+  va_list ap;
+  int written;
+
+  va_start(ap, fmt);
+  written = vsnprintf(buf + off, bufsz - off, fmt, ap);
+  va_end(ap);
+
+  return n + written;
+}
+
+static int json_bbox(char *buf, size_t bufsz, int n, const DETECT_BBox_t *b)
+{
+  return json_append(buf, bufsz, n, "{\"x_min\":%u,\"y_min\":%u,\"x_max\":%u,\"y_max\":%u}",
+                      b->x_min, b->y_min, b->x_max, b->y_max);
+}
+
+static int json_bloc(char *buf, size_t bufsz, int n, const DETECT_Bloc_t *b)
+{
+  n = json_append(buf, bufsz, n, "{\"bbox\":");
+  n = json_bbox(buf, bufsz, n, &b->bbox);
+  return json_append(buf, bufsz, n,
+                      ",\"valeur_moyenne\":%.2f,\"mean_moyen\":%.2f,\"std_moyen\":%.2f,\"nb_voisin_moyen\":%.2f}",
+                      (double)b->valeur_moyenne, (double)b->mean_moyen, (double)b->std_moyen, (double)b->nb_voisin_moyen);
+}
+
+static int json_pipe_result(char *buf, size_t bufsz, int n, const DETECT_PipeResult_t *p)
+{
+  const DETECT_DeviationVoisinage_t *dv = &p->deviation_voisinage;
+
+  n = json_append(buf, bufsz, n,
+                   "{\"mouvement\":{\"detecte\":%s,\"delta_max_frame_moins_1\":%u,\"delta_max_frame_moins_2\":%u},"
+                   "\"deviation_voisinage\":{\"detecte\":%s,\"pct_pipe\":%.2f,\"bbox_global\":",
+                   p->mouvement.detecte ? "true" : "false",
+                   p->mouvement.delta_max_frame_moins_1, p->mouvement.delta_max_frame_moins_2,
+                   dv->detecte ? "true" : "false", (double)dv->pct_pipe);
+
+  n = dv->bbox_global_valid ? json_bbox(buf, bufsz, n, &dv->bbox_global) : json_append(buf, bufsz, n, "null");
+
+  n = json_append(buf, bufsz, n, ",\"blocs\":[");
+  for (uint8_t i = 0; i < dv->nb_blocs; i++)
+  {
+    if (i > 0) n = json_append(buf, bufsz, n, ",");
+    n = json_bloc(buf, bufsz, n, &dv->blocs[i]);
+  }
+  return json_append(buf, bufsz, n, "]}}");
+}
+
+int record_detection_json_to_sd(const char *fname, const char *det_timestamp,
+                                 const DETECT_Result_t *p_result, const Config_t *p_config,
+                                 int rec_height, int32_t exposure_us, int32_t gain_mdb)
+{
+  static char buf[8192];
+  int rec_width = rec_height * 4 / 3; /* 4:3, see record_snapshot_to_ram/setup_record_h264 */
+  double gain_db = (double)gain_mdb / 1000.0;
+  int iso_approx = (int)(100.0 * pow(10.0, gain_db / 20.0)); /* same formula as camera_config_gui.py */
+  int n = 0;
+
+  n = json_append(buf, sizeof(buf), n,
+    "{\"titre\":\"DIAS - D\xc3\xa9tecteur Intelligent d'Animaux Sauvages\","
+    "\"no_device\":\"" DEVICE_NBR "\",\"rev_fw\":\"" FW_REV "\","
+    "\"config\":{"
+    "\"second_plan\":{\"crop\":{\"v_start\":%u,\"v_size\":%u,\"h_start\":%u,\"h_size\":%u},\"downsize_ratio\":%.2f},"
+    "\"premier_plan\":{\"crop\":{\"v_start\":%u,\"v_size\":%u,\"h_start\":%u,\"h_size\":%u},\"downsize_ratio\":%.2f,\"decimation_ratio\":%u},"
+    "\"thresholds\":{"
+      "\"mouvement\":{\"thresh_mvt\":%u,\"note\":\"diff frame-a-frame vs les 2 frames precedentes, independant du masque deviation/voisinage\"},"
+      "\"deviation\":{\"note\":\"pixel hors-bande si valeur < mean-std ou > mean+std ; mean/std sont calcules par pixel, cf. detections\"},"
+      "\"voisinage\":{\"dim_carre\":\"3x3\",\"nb_voisin\":{\"second_plan\":%u,\"premier_plan\":%u},\"note\":\"nb minimal de cellules du carre (centre inclus) hors-bande pour confirmer la detection\"},"
+      "\"derive_fond\":{\"stat_adjust_ratio\":\"1/12\",\"note\":\"mean/std glissent lentement vers la frame courante sur les pixels non detectes\"}"
+    "},"
+    "\"proprietes_enregistrement\":{\"width\":%d,\"height\":%d,\"format\":\"4:3\","
+      "\"video\":{\"fps\":%d,\"duree_s\":%d,\"facteur_compression\":%d}},"
+    "\"resolution_gui\":{\"width\":%d,\"height\":%d,\"note\":\"pleine resolution capteur\"}"
+    "},",
+    p_config->crop_v_start_pipe1, p_config->crop_v_size_pipe1, p_config->crop_h_start_pipe1, p_config->crop_h_size_pipe1,
+    (double)p_config->downsize_ratio_pipe1,
+    p_config->crop_v_start_pipe2, p_config->crop_v_size_pipe2, p_config->crop_h_start_pipe2, p_config->crop_h_size_pipe2,
+    (double)p_config->downsize_ratio_pipe2, p_config->decimation_ratio_pipe2,
+    DETECT_THRESH_MVT, DETECT_NB_VOISIN_PIPE1, DETECT_NB_VOISIN_PIPE2,
+    rec_width, rec_height, H264_FPS, VIDEO_DURATION_S, VIDEO_COMPRESSION_FACTOR,
+    SENSOR_WIDTH, SENSOR_HEIGHT);
+
+  n = json_append(buf, sizeof(buf), n,
+    "\"detections\":{\"note_coordonnees\":\"bbox et blocs sont exprimes en coordonnees locales au pipe (apres crop + downsize), pas en coordonnees capteur brutes\","
+    "\"events\":[{\"det_timestamp\":\"%s\","
+    "\"camera\":{\"exposure_us\":%ld,\"gain_db\":%.2f,\"iso_approx\":%d},"
+    "\"second_plan\":",
+    det_timestamp, (long)exposure_us, gain_db, iso_approx);
+  n = json_pipe_result(buf, sizeof(buf), n, &p_result->second_plan);
+  n = json_append(buf, sizeof(buf), n, ",\"premier_plan\":");
+  n = json_pipe_result(buf, sizeof(buf), n, &p_result->premier_plan);
+  n = json_append(buf, sizeof(buf), n, "}]}}");
+
+  if (n < 0 || (size_t)n >= sizeof(buf)) {
+    printf("[REC] detection json too large (%d bytes, buffer %u)\r\n", n, (unsigned)sizeof(buf));
+    return -1;
+  }
+
+  return REC_SaveFile((const uint8_t *)buf, (size_t)n, fname);
 }
 

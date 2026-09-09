@@ -66,10 +66,10 @@ int REC_PushFrame(const uint8_t *p_data, size_t len, uint32_t duration_90k);
  * closes the file.  Blocks until done.  Returns 0 on success. */
 int REC_Stop(void);
 
-/* Writes an already-encoded JPEG image to a new IMG_xxxx.JPG file on the
- * card.  The write is performed by the SD writer task (FreeRTOS); this
- * call blocks until the file is closed.  Must not be called while a video
- * recording is active.  Returns 0 on success. */
-int REC_SaveJpeg(const uint8_t *p_data, size_t len, const char *fname);
+/* Writes an already-encoded buffer to a new file on the card (content-
+ * agnostic -- JPEG, JSON, ...). The write is performed by the SD writer
+ * task (FreeRTOS); this call blocks until the file is closed. Must not be
+ * called while a video recording is active. Returns 0 on success. */
+int REC_SaveFile(const uint8_t *p_data, size_t len, const char *fname);
 
 #endif /* APP_REC_H */

@@ -18,6 +18,9 @@
 #ifndef APP_CONFIG
 #define APP_CONFIG
 
+#define DEVICE_NBR "A"
+#define FW_REV "1.0"
+
 /* Full-resolution capture buffer: one 2592x1944 frame, 2 bytes/pixel
  * (YUV422 in config mode; also holds the 2 RGB565 720p frames + the
  * encoded-video ring buffer during H264 recording — see app.c) */
@@ -33,5 +36,9 @@
  * RAM store -- see H264_RAM_STORE_SIZE in app_record.c -- at the cost of
  * quality); higher = less compression (better quality, larger files). */
 #define VIDEO_COMPRESSION_FACTOR 8
+
+/* Length of the H264 clip recorded on each detection (record_h264_to_ram's
+ * rec_duration argument, see app.c's VIDEO_CAPTURE state). */
+#define VIDEO_DURATION_S 10
 
 #endif
