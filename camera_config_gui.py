@@ -474,8 +474,8 @@ class InteractiveCropView(QGraphicsView):
 
 class SerialWorker(QThread):
     line_received  = pyqtSignal(str)           # ligne printf du STM (journal)
-    image_received = pyqtSignal(object, str)   # numpy img, description (capture 'S' à la demande)
-    movement_snapshot_received = pyqtSignal(object, str)  # idem, mais poussé
+    image_received = pyqtSignal(object)        # numpy img (capture 'S' à la demande)
+    movement_snapshot_received = pyqtSignal(object)  # idem, mais poussé
                                                 # sans demande par RECORD_MODE_INIT
                                                 # (mouvement détecté côté µC)
     capture_error  = pyqtSignal(str)
@@ -617,9 +617,9 @@ class SerialWorker(QThread):
             buf.extend(ser.read(remaining))
         return bytes(buf), leftover
 
-    # ── Lit taille + JPEG + exposition/gain après un sync 0xAA déjà consommé,
-    # décode et émet image_received. Utilisé à la fois par la capture 'S' à la
-    # demande et par un snapshot non sollicité (mouvement détecté côté µC).
+    # ── Lit taille + JPEG après un sync 0xAA déjà consommé, décode et émet
+    # image_received. Utilisé à la fois par la capture 'S' à la demande et
+    # par un snapshot non sollicité (mouvement détecté côté µC).
     # `leftover` : octets du chunk courant déjà lus après le 0xAA (peut être
     # vide). Retourne les octets en trop non consommés (normalement vide),
     # à réinjecter dans la boucle principale au lieu d'être perdus.
@@ -646,28 +646,13 @@ class SerialWorker(QThread):
                 self.capture_error.emit("incomplete jpeg data.")
                 return leftover
 
-            exposure_us = 0
-            gain_raw    = 0
-            b, leftover = self._read_exact(ser, 4, leftover)
-            if len(b) == 4:
-                exposure_us = int.from_bytes(b, 'little')
-            b, leftover = self._read_exact(ser, 4, leftover)
-            if len(b) == 4:
-                gain_raw = int.from_bytes(b, 'little')
-
-            gain_db     = gain_raw / 1000.0
-            gain_linear = 10 ** (gain_db / 20)
-            iso_approx  = int(100 * gain_linear)
-
             if jpeg_data[:2] != b'\xff\xd8':
                 self.capture_error.emit("corrupted jpeg")
                 return leftover
 
             img_pil = Image.open(BytesIO(jpeg_data))
             img_np  = np.array(img_pil.convert("RGB"), dtype=np.uint8)
-            desc = (f"exposure = {exposure_us} µs | gain = {gain_db:.1f} db "
-                    f"(≈ ISO {iso_approx})")
-            signal.emit(img_np, desc)
+            signal.emit(img_np)
 
         except Exception as e:
             import traceback; traceback.print_exc()
@@ -1274,7 +1259,7 @@ class MainWindow(QMainWindow):
         self._update_buttons()
         self._worker.request_capture()
 
-    def _on_image_received(self, img_np, desc):
+    def _on_image_received(self, img_np):
         self._last_image = img_np
         self._captured = True
         self._tested   = False        # nouvelle capture => il faut réappliquer
@@ -1285,7 +1270,7 @@ class MainWindow(QMainWindow):
         self._busy = False
         self._update_buttons()
 
-    def _on_movement_snapshot(self, img_np, desc):
+    def _on_movement_snapshot(self, img_np):
         """Snapshot poussé par le µC dès qu'un mouvement déclenche un
         enregistrement (RECORD_MODE_INIT) -- affichage seul, ne touche pas à
         l'état d'édition de la config (rectangles de crop, bouton Appliquer)

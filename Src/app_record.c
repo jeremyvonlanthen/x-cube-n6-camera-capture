@@ -77,10 +77,8 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
  * record_snapshot_flush_to_sd() writes it out once the card is mounted.
  * Called in RECORD_MODE_INIT.
  *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res).
- *   exposure_us/gain_mdb : forwarded to send_img_uart() as-is (read once by
- *     the caller, avoids a redundant CMW_CAMERA_GetExposure/GetGain here).
  * Returns the encoded length (> 0), or <= 0 on capture/encode failure. */
-int record_snapshot_to_ram(int height, int32_t exposure_us, int32_t gain_mdb)
+int record_snapshot_to_ram(int height)
 {
   int width = height * 4 / 3;      /* 4:3, full-scene downscale from sensor */
   int jpeg_len;
@@ -136,15 +134,7 @@ int record_snapshot_to_ram(int height, int32_t exposure_us, int32_t gain_mdb)
   SCB_CleanDCache_by_Addr((uint32_t *)hires_jpeg_buffer, CACHE_ALIGN_SIZE(jpeg_len));
   JPG_Deinit();
 
-  if (jpeg_len <= 0)
-    printf("[REC] JPG encode failed (%d)\r\n", jpeg_len);
-  else
-    /* Unsolicited push to the GUI (same 0xAA-framed protocol as capture_img()
-     * / send_img_uart(), just not preceded by a GUI-sent 'S' this time): lets
-     * the user see, live, what triggered the movement detection. At 10 MBaud
-     * this blocks for well under a second even for a large JPEG -- no
-     * meaningful delay to the VIDEO_CAPTURE that follows. */
-    send_img_uart(hires_jpeg_buffer, jpeg_len, exposure_us, gain_mdb);
+  if (jpeg_len <= 0) printf("[REC] JPG encode failed (%d)\r\n", jpeg_len);
 
   snapshot_jpeg_len = jpeg_len;
   return jpeg_len;
@@ -545,9 +535,9 @@ int record_detection_json_to_sd(const char *fname, const char *det_timestamp,
     "\"premier_plan\":{\"crop\":{\"v_start\":%u,\"v_size\":%u,\"h_start\":%u,\"h_size\":%u},\"downsize_ratio\":%.2f,\"decimation_ratio\":%u},"
     "\"thresholds\":{"
       "\"mouvement\":{\"thresh_mvt\":%u,\"note\":\"diff frame-a-frame vs les 2 frames precedentes, independant du masque deviation/voisinage\"},"
-      "\"deviation\":{\"note\":\"pixel hors-bande si valeur < mean-std ou > mean+std ; mean/std sont calcules par pixel, cf. detections\"},"
+      "\"deviation\":{\"facteur_sur_std\":%u,\"note\":\"pixel hors-bande si valeur ∉ [mean-std ; mean+std] ; mean/std sont calcules par pixel, cf. detections\"},"
       "\"voisinage\":{\"dim_carre\":\"3x3\",\"nb_voisin\":{\"second_plan\":%u,\"premier_plan\":%u},\"note\":\"nb minimal de cellules du carre (centre inclus) hors-bande pour confirmer la detection\"},"
-      "\"derive_fond\":{\"stat_adjust_ratio\":\"1/12\",\"note\":\"mean/std glissent lentement vers la frame courante sur les pixels non detectes\"}"
+      "\"derive_fond\":{\"stat_adjust_ratio\":%.4f,\"note\":\"mean/std glissent lentement vers la frame courante sur les pixels non detectes\"}"
     "},"
     "\"proprietes_enregistrement\":{\"width\":%d,\"height\":%d,\"format\":\"4:3\","
       "\"video\":{\"fps\":%d,\"duree_s\":%d,\"facteur_compression\":%d}},"
@@ -557,7 +547,8 @@ int record_detection_json_to_sd(const char *fname, const char *det_timestamp,
     (double)p_config->downsize_ratio_pipe1,
     p_config->crop_v_start_pipe2, p_config->crop_v_size_pipe2, p_config->crop_h_start_pipe2, p_config->crop_h_size_pipe2,
     (double)p_config->downsize_ratio_pipe2, p_config->decimation_ratio_pipe2,
-    DETECT_THRESH_MVT, DETECT_NB_VOISIN_PIPE1, DETECT_NB_VOISIN_PIPE2,
+    DETECT_THRESH_MVT, STD_FACTOR, DETECT_NB_VOISIN_PIPE1, DETECT_NB_VOISIN_PIPE2,
+    (double)DETECT_STAT_ADJUST_RATIO,
     rec_width, rec_height, H264_FPS, VIDEO_DURATION_S, VIDEO_COMPRESSION_FACTOR,
     SENSOR_WIDTH, SENSOR_HEIGHT);
 

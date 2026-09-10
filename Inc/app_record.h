@@ -9,7 +9,7 @@
  * height: 4:3 photo height (width derived), up to the sensor full resolution.
  * exposure_us/gain_mdb: forwarded to send_img_uart() (read once upstream).
  * Returns the encoded length (> 0), or <= 0 on failure. */
-int record_snapshot_to_ram(int height, int32_t exposure_us, int32_t gain_mdb);
+int record_snapshot_to_ram(int height);
 /* Writes the JPEG captured by record_snapshot_to_ram() into fname on the SD
  * card. Call in MULTIMEDIA_STORAGE, once SD_CARD_INIT has succeeded.
  * Returns 0 on success. */

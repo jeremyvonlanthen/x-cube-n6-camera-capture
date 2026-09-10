@@ -225,10 +225,7 @@ void app_run(void)
 				int jpeg_len = capture_img();
 				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
 				HAL_Delay(50);
-				int32_t cap_exposure = 0, cap_gain = 0;
-				CMW_CAMERA_GetExposure(&cap_exposure);
-				CMW_CAMERA_GetGain(&cap_gain);
-				send_img_uart(hires_jpeg_buffer, jpeg_len, cap_exposure, cap_gain);
+				send_img_uart(hires_jpeg_buffer, jpeg_len);
 				break;
 
 			case 'T':
@@ -351,7 +348,8 @@ void app_run(void)
 
 		case RECORD_MODE_INIT:
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
-			record_snapshot_to_ram(rec_files_height, detect_exposure, detect_gain);
+			int jpeg_len = record_snapshot_to_ram(rec_files_height);
+			send_img_uart(hires_jpeg_buffer, jpeg_len);
 
 			/* is_target_animal_detected() picks the primary format (MP4 if
 			 * true, JPEG if false); RECORD_JPEG_AND_MP4 force-saves the other

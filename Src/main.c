@@ -294,7 +294,7 @@ static void CONSOLE_Config()
   huart1.Init.OverSampling = UART_OVERSAMPLING_8;
   if (HAL_UART_Init(&huart1) != HAL_OK)
   {
-    while (1); //TODO: enlever les while(1)
+    while (1);
   }
 }
 

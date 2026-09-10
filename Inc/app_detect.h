@@ -19,6 +19,7 @@
 /* Detection thresholds -- single source of truth, used by app_detect.c and
  * readable from app.c for the config side of the JSON log. */
 #define DETECT_THRESH_MVT        75U
+#define STD_FACTOR               7U
 #define DETECT_NB_VOISIN_PIPE1   3U
 #define DETECT_NB_VOISIN_PIPE2   2U
 #define DETECT_DIM_CARRE         3U

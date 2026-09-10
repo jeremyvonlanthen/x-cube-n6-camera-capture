@@ -181,14 +181,15 @@ static void last_stat_calibration(uint8_t *p_src, uint8_t *p_dst_mean, uint16_t 
     }
 }
 
-/* Derives the per-pixel detection threshold (std, floored at 7, saturated
- * at 255) from the variance computed by last_stat_calibration/stat_adjustment. */
+/* Derives the per-pixel detection threshold (std, floored at STD_FACTOR,
+ * saturated at 255) from the variance computed by
+ * last_stat_calibration/stat_adjustment. */
 static void var_to_std(uint16_t *p_var, uint8_t *p_std, uint32_t size_pipe)
 {
     for (uint32_t i = 0; i < size_pipe; i++)
     {
-        float k_std = sqrtf((float)p_var[i]) * 7.0f;
-        if (k_std < 7.0f) k_std = 7.0f;
+        float k_std = sqrtf((float)p_var[i]) * (float)STD_FACTOR;
+        if (k_std < (float)STD_FACTOR) k_std = (float)STD_FACTOR;
         p_std[i] = (k_std < 255.0f) ? (uint8_t)floorf(k_std) : MAX_GREY;
     }
 }
@@ -431,8 +432,8 @@ static void stat_adjustment(uint8_t *p_src, uint8_t *p_detect, uint8_t *p_mean, 
 			row_mean[col] = (uint8_t)floorf((1-stat_adjust_ratio) * (float)row_mean[col] + stat_adjust_ratio * (float)row_src[col]);
 			row_var[col] = (uint16_t)floorf((1-stat_adjust_ratio) * ((float)row_var[col] + stat_adjust_ratio * diff * diff));
 
-			float k_std = sqrtf((float)row_var[col]) * 7.0f;
-			if (k_std < 7.0f) k_std = 7.0f;
+			float k_std = sqrtf((float)row_var[col]) * (float)STD_FACTOR;
+			if (k_std < (float)STD_FACTOR) k_std = (float)STD_FACTOR;
 			row_std[col] = (k_std < 255.0f) ? (uint8_t)floorf(k_std) : MAX_GREY;
 		}
 	}

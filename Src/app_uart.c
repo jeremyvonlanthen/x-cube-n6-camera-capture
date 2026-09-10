@@ -18,8 +18,8 @@
  * ========================================================================== */
 
 /* Sends one encoded JPEG over UART:
- *   0xAA | length (4 B, little endian) | JPEG data | exposure (4 B) | gain (4 B) */
-void send_img_uart(const uint8_t *jpeg, int jpeg_len, int32_t exposure_us, int32_t gain_mdb)
+ *   0xAA | length (4 B, little endian) | JPEG data */
+void send_img_uart(const uint8_t *jpeg, int jpeg_len)
 {
 	uart_busy = true;
 
@@ -50,10 +50,6 @@ void send_img_uart(const uint8_t *jpeg, int jpeg_len, int32_t exposure_us, int32
     src += chunk;
     remaining -= chunk;
   }
-
-  if (HAL_UART_Transmit(&huart1, (uint8_t *)&exposure_us, sizeof(exposure_us), UART_TX_TIMEOUT_MS) != HAL_OK)
-    goto out;
-  HAL_UART_Transmit(&huart1, (uint8_t *)&gain_mdb, sizeof(gain_mdb), UART_TX_TIMEOUT_MS);
 
 out:
   uart_busy = false;
