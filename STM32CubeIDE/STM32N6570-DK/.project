@@ -112,6 +112,11 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_uart.c</locationURI>
 		</link>
 		<link>
+			<name>Src/app_watchdog.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_watchdog.c</locationURI>
+		</link>
+		<link>
 			<name>Src/freertos_bsp.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Src/freertos_bsp.c</locationURI>

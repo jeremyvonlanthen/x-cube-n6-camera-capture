@@ -25,6 +25,7 @@
 #include <string.h>
 
 #include "app_rec.h"
+#include "app_watchdog.h"
 #include "utils.h"           /* IN_PSRAM, ALIGN_32 */
 #include "stm32n6xx_hal.h"
 #include "stm32n6570_discovery_sd.h"
@@ -333,6 +334,22 @@ static char rec_save_fname[48] = "IMG_0001.JPG";
 /* File name of the recording currently open, logged when it is finalized */
 static char rec_mp4_fname[48]  = "VID_0001.MP4";
 
+/* Labels rec_write_file()'s log line by extension, so the picture/data-file
+ * saves (both routed through the same REC_SaveFile/rec_write_file path) read
+ * distinctly in the console log instead of two identical "file saved to". */
+static const char *rec_file_kind(const char *fname)
+{
+  size_t len = strlen(fname);
+
+  if (len >= 5 && strcmp(fname + len - 5, ".jpeg") == 0)
+    return "picture";
+  if (len >= 4 && strcmp(fname + len - 4, ".jpg") == 0)
+    return "picture";
+  if (len >= 5 && strcmp(fname + len - 5, ".json") == 0)
+    return "data file";
+  return "file";
+}
+
 /* Writes p_data to the file named rec_save_fname (SD writer task context). */
 static int rec_write_file(const uint8_t *p_data, uint32_t len)
 {
@@ -357,7 +374,7 @@ static int rec_write_file(const uint8_t *p_data, uint32_t len)
     return -1;
   }
 
-  printf("[REC] file saved to %s (%.1f KB)\r\n", fname, (float)len / 1024.0f);
+  printf("[REC] %s saved to %s (%.1f KB)\r\n", rec_file_kind(fname), fname, (float)len / 1024.0f);
   return 0;
 }
 
@@ -372,6 +389,8 @@ static void rec_task_fct(void *arg)
 
   for (;;) {
     xQueueReceive(q_filled, &msg, portMAX_DELAY);
+
+    watchdog_kick();
 
     if (msg.type == REC_MSG_FRAME) {
       /* Note: frames queued before a STOP are still written (FIFO order) */

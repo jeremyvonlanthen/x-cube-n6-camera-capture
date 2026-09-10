@@ -160,6 +160,7 @@
 "./Src/app_rtc.o"
 "./Src/app_sleep.o"
 "./Src/app_uart.o"
+"./Src/app_watchdog.o"
 "./Src/freertos_bsp.o"
 "./Src/main.o"
 "./Src/sd_diskio.o"

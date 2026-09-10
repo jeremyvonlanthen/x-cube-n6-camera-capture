@@ -24,6 +24,7 @@
 #include "app_fuseprogramming.h"
 #include "app_rtc.h"
 #include "app_sleep.h"
+#include "app_watchdog.h"
 #include "main.h"
 #include "npu_cache.h"
 #ifdef STM32N6570_DK_REV
@@ -426,6 +427,8 @@ static void main_thread_fct(void *arg)
   LSI_Config();
   rtc_init();
   app_sleep_init();
+
+  watchdog_init();
 
   app_run();
 

@@ -48,6 +48,7 @@
 #include "app_callbacks.h"
 #include "app_rec.h"
 #include "app_sleep.h"
+#include "app_watchdog.h"
 
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_hal_dcmipp.h"
@@ -202,6 +203,8 @@ void app_run(void)
 
 	while(1)
 	{
+		watchdog_kick();
+
 		switch(state)
 		{
 		case CONFIG_MODE_WARMUP:

@@ -1058,7 +1058,7 @@ class MainWindow(QMainWindow):
         self.p2_left = _int_field(0);   g2l.addWidget(self.p2_left, 2, 1)
         g2l.addWidget(_lbl("Limite droite (X px)"), 3, 0)
         self.p2_right = _int_field(2592); g2l.addWidget(self.p2_right, 3, 1)
-        g2l.addWidget(_lbl_with_info("Taille bloc   (px)", BLOCK_SIZE_TOOLTIP_HTML), 4, 0)
+        g2l.addWidget(_lbl_with_info("Taille bloc   (px, <64)", BLOCK_SIZE_TOOLTIP_HTML), 4, 0)
         self.p2_bs = _int_field(35);    g2l.addWidget(self.p2_bs, 4, 1)
 
         # Info decimation (calculée automatiquement, champ readonly comme les

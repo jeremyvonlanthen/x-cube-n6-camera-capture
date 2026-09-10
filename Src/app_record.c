@@ -19,6 +19,7 @@
 #include "app_rec.h"
 #include "app_enc.h"
 #include "app_uart.h"
+#include "app_watchdog.h"
 #include "cmw_camera.h"
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_hal_dcmipp.h"
@@ -107,6 +108,7 @@ int record_snapshot_to_ram(int height, int32_t exposure_us, int32_t gain_mdb)
       printf("[REC] snapshot capture timeout\r\n");
       return -1;
     }
+    watchdog_kick();
     vTaskDelay(pdMS_TO_TICKS(1));
   }
   snapshot_in_progress = false;
@@ -327,6 +329,7 @@ int record_h264_to_ram(int height, int rec_duration)
       vTaskDelay(pdMS_TO_TICKS(1));
       continue;
     }
+    watchdog_kick();
     h264_frame_ready = false;
     frame_count++;
 
@@ -443,6 +446,7 @@ int record_h264_flush_to_sd(const char *fname)
     h264_frame_desc_t *d = &h264_ram_frames[i];
     uint32_t retries = 0;
 
+    watchdog_kick();
     while (REC_PushFrame(&h264_ram_store[d->offset], d->len, d->duration) != 0) {
       if (++retries > 5000u) { /* ~5 s: the SD writer task should never stall this long */
         printf("[REC] flush: ring stayed full, frame %lu dropped\r\n", (unsigned long)i);

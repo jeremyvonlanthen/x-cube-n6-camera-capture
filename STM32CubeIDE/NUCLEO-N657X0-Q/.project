@@ -207,6 +207,11 @@
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_uart.c</locationURI>
 		</link>
 		<link>
+			<name>Src/app_watchdog.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/Src/app_watchdog.c</locationURI>
+		</link>
+		<link>
 			<name>Src/app_capture.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/Src/app_capture.c</locationURI>
@@ -350,6 +355,11 @@
 			<name>STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_jpeg.c</name>
 			<type>1</type>
 			<locationURI>PARENT-2-PROJECT_LOC/STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_jpeg.c</locationURI>
+		</link>
+		<link>
+			<name>STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_iwdg.c</name>
+			<type>1</type>
+			<locationURI>PARENT-2-PROJECT_LOC/STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_iwdg.c</locationURI>
 		</link>
 		<link>
 			<name>STM32Cube_FW_N6/Drivers/STM32N6xx_HAL_Driver/Src/stm32n6xx_hal_ltdc.c</name>
