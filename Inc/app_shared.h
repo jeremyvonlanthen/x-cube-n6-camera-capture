@@ -19,6 +19,8 @@
 #define SENSOR_WARMUP_FPS     5
 #define WARMUP_FRAMES_TARGET  10      /* frames skipped so the AE/ISP converge */
 
+#define REC_FILE_HEIGHT				920     /* 480, 720, 960, 1080 (max) */
+
 #define CONFIG_MAGIC          0x12345678u
 #define CACHE_ALIGN_SIZE(s)   (((s) + 31) & ~31)
 

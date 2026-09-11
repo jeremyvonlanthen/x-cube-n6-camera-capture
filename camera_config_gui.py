@@ -17,6 +17,7 @@ Usage       : python camera_config_gui.py
 """
 
 import sys
+import os
 import time
 import queue
 import struct
@@ -34,10 +35,10 @@ from PyQt6.QtWidgets import (
     QFrame, QGroupBox, QSizePolicy, QTextEdit, QStackedWidget,
     QGraphicsView, QGraphicsScene, QGraphicsRectItem, QGraphicsPixmapItem,
     QGraphicsLineItem, QGraphicsSimpleTextItem, QGraphicsItem,
-    QButtonGroup, QCheckBox,
+    QButtonGroup, QCheckBox, QMessageBox,
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QRectF
-from PyQt6.QtGui import QFont, QIntValidator, QPixmap, QPen, QBrush, QColor, QImage, QPainter
+from PyQt6.QtGui import QFont, QIntValidator, QPixmap, QPen, QBrush, QColor, QImage, QPainter, QIcon
 
 # =============================================================================
 #  Constantes
@@ -47,6 +48,22 @@ MAGIC          = 0x12345678
 UART_BAUDRATE  = 10_000_000
 ST_VID         = 0x0483      # VID USB STMicroelectronics (ST-Link VCP)
 POLL_MS        = 1500        # période de polling des ports série
+
+# Délai (s) de silence après "dev. board detected" au-delà duquel on
+# considère que l'USB a été branché avant l'allumage du système (aucune
+# ligne du µC n'a suivi la détection -- s'il tournait déjà, une ligne serait
+# arrivée quasi immédiatement).
+USB_SILENCE_TIMEOUT_S = 3.5
+
+USB_WARNING_TEXT = (
+    "Le câble USB semble avoir été branché avant l'allumage du système.\n\n"
+    "Mode CONFIG :\nCe message peut-être ignoré.\n\n"
+    "Mode DIURNE/24h :\nNE PAS débrancher l'USB, cela interromprait les futures acquisitions.\n"
+    "Pour un fonctionnement autonome sur batterie :\n"
+    "        1. Retirez le câble USB,\n"
+    "        2. Allumez le système,\n"
+    "        3. Branchez l'USB (seulement si besoin).\n"
+)
 BG             = "#f4f6fa"   # fond clair
 FG             = "#2a3442"
 MAX_DOWNSIZE   = 7.99   # downsize_ratio max (jamais 8 exactement)
@@ -62,6 +79,8 @@ AXIS_TICK_STEP        = 100  # pas de graduation, en pixels image
 AXIS_LEFT_MARGIN_PX   = 42
 AXIS_TOP_MARGIN_PX    = 26
 AXIS_BOTTOM_MARGIN_PX = 20
+
+LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo.png")
 
 # =============================================================================
 #  Calcul decimation pipe 2
@@ -510,6 +529,18 @@ class SerialWorker(QThread):
             return
         self.port_opened.emit(True)
 
+        # Demande au µC de réannoncer son état "prêt pour capture" ('R'),
+        # au cas où il y soit entré avant que ce port ne soit ouvert (ex.
+        # système déjà démarré en mode config, silencieux tant qu'aucune
+        # commande n'arrive -- sans ça, ni "Capturer" ni la détection
+        # d'ordre de branchement (MainWindow._check_usb_boot_order) ne
+        # verraient jamais de signe de vie). Inoffensif dans les autres
+        # états (mode diurne/24h) : l'octet est simplement ignoré.
+        try:
+            ser.write(b'R'); ser.flush()
+        except Exception:
+            pass
+
         line         = bytearray()   # ligne printf en cours de reconstruction
         awaiting_ack = False         # attente de l'ack config
         saw_fail     = False         # au moins un 'F' reçu pendant l'attente
@@ -892,11 +923,19 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Configuration Caméra — STM32N6")
         self.setStyleSheet(STYLE)
+        self.setWindowIcon(QIcon(LOGO_PATH))
 
         # État du flux de travail
         self._last_image = None    # numpy array
         self._worker     = None    # SerialWorker (unique propriétaire du port)
         self._auto_port  = None    # port de la carte ST détectée
+
+        # Détection de l'ordre de branchement USB / allumage (voir
+        # _check_usb_boot_order / _show_usb_warning_popup) : si aucune ligne
+        # du µC ne suit "dev. board detected" dans le délai imparti, l'USB
+        # était déjà branché avant l'allumage du système.
+        self._line_seen_since_connect = False
+        self._usb_popup = None   # QMessageBox actuellement affichée, ou None
 
         self._ready    = False   # µC prêt (message "wait for send yuv frame")
         self._captured = False   # une capture a réussi
@@ -1108,11 +1147,55 @@ class MainWindow(QMainWindow):
         self.logbox.append(f"<span style='color:#2f7a2f'>STM &raquo;</span> {text}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
+
+        # Une ligne est arrivée : si _check_usb_boot_order() n'a pas encore
+        # tranché (voir plus bas), ceci lui apprendra que le µC a réagi --
+        # donc qu'il tournait déjà avant le branchement USB.
+        self._line_seen_since_connect = True
+
         # Le µC signale qu'il attend une capture -> (ré)active "Capturer"
         if "(capturer une image)" in text:
             self._on_ready()
         if "RESTART OF THE CONFIG PROCEDURE" in text:
             self._on_config_warmup()
+
+        # Mode config confirmé : l'avertissement (pensé pour le mode
+        # diurne/24h autonome, où débrancher casse tout) ne s'applique pas
+        # à une session de config au bureau -- l'USB y reste branché tout
+        # du long de toute façon.
+        if "RUNS NOW IN CONFIG MODE" in text:
+            self._close_usb_warning_popup()
+
+    def _check_usb_boot_order(self):
+        """Appelé USB_SILENCE_TIMEOUT_S après "dev. board detected". Si
+        aucune ligne du µC n'est arrivée depuis, il n'a réagi à rien -- donc
+        il n'était pas encore démarré au moment du branchement USB (l'USB
+        était déjà là avant l'allumage)."""
+        if self._auto_port is None:
+            return  # déconnecté entre-temps, plus pertinent
+        if not self._line_seen_since_connect:
+            self._show_usb_warning_popup()
+
+    def _show_usb_warning_popup(self):
+        if self._usb_popup is not None and self._usb_popup.isVisible():
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Warning)
+        box.setWindowTitle("USB branché avant l'allumage")
+        box.setText(USB_WARNING_TEXT)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
+        # Modale (bloque l'interaction avec la fenêtre principale) mais
+        # affichée via show() plutôt que exec() : ne bloque pas la boucle
+        # d'évènements, donc la lecture série et la fermeture automatique
+        # sur "RUNS NOW IN CONFIG MODE" continuent de fonctionner.
+        box.setWindowModality(Qt.WindowModality.ApplicationModal)
+        box.show()
+        self._usb_popup = box
+
+    def _close_usb_warning_popup(self):
+        if self._usb_popup is not None:
+            self._usb_popup.close()
+            self._usb_popup = None
 
     def _reset_display(self):
         """Repart sur le placeholder (aucune image) et reverrouille les 8
@@ -1220,6 +1303,11 @@ class MainWindow(QMainWindow):
                 self._sent     = False
                 self._reset_display()
                 self._update_buttons()
+                # Réinitialise la détection d'ordre de branchement pour cette
+                # nouvelle connexion, et programme la vérification à
+                # USB_SILENCE_TIMEOUT_S (voir _log_stm/_check_usb_boot_order).
+                self._line_seen_since_connect = False
+                QTimer.singleShot(int(USB_SILENCE_TIMEOUT_S * 1000), self._check_usb_boot_order)
                 self._start_worker()
         else:
             if self._auto_port is not None:
@@ -1227,6 +1315,7 @@ class MainWindow(QMainWindow):
                 self._stop_worker()
                 self._ready = False
             self._auto_port = None
+            self._close_usb_warning_popup()
             self.port_info.setText("Searching for dev. board… (VID 0x0483)")
             self.port_info.setStyleSheet("color: #96702a; font-size: 10px;")
             self._update_buttons()
@@ -1563,8 +1652,19 @@ class MainWindow(QMainWindow):
 # =============================================================================
 
 if __name__ == "__main__":
+    if sys.platform == "win32":
+        # Sous Windows, l'icône de la barre des tâches suit l'"App User
+        # Model ID" du processus plutôt que setWindowIcon() seul -- sans
+        # ceci, l'icône de python.exe s'affiche à la place de la nôtre.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("DIAS.CameraConfigGUI")
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
+    app.setWindowIcon(QIcon(LOGO_PATH))
     win = MainWindow()
     win.show()
     sys.exit(app.exec())

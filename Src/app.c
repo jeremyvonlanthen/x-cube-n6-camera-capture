@@ -179,8 +179,7 @@ void app_run(void)
 	#endif
 
 	char timestamp[20];
-	char path[48]; // timestamp (19) + "/_config-sys_data-det.json" (26) + '\0'
-	int rec_files_height = 960; // 480, 720, 960, 1080 (max)
+	char path[48];
 
 	bool is_img_to_save = false;
 	bool is_video_to_record = false;
@@ -211,7 +210,6 @@ void app_run(void)
 			printf("[FSM] config-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1, 0);
 
-			printf("[FSM] wait to get config frame... (capturer une image)\r\n");
 			state = SEND_IMG_FRAME;
 			break;
 
@@ -236,6 +234,10 @@ void app_run(void)
 
 			case 'V':
 				state = RECEIVE_PIPES_CONFIG;
+				break;
+
+			case 'R':
+				printf("[FSM] wait to get config frame... (capturer une image)\r\n");
 				break;
 			}
 			break;
@@ -354,7 +356,7 @@ void app_run(void)
 
 		case RECORD_MODE_INIT:
 			rtc_make_timestamp(timestamp, sizeof(timestamp));
-			int jpeg_len = record_snapshot_to_ram(rec_files_height);
+			int jpeg_len = record_snapshot_to_ram(REC_FILE_HEIGHT);
 			send_img_uart(hires_jpeg_buffer, jpeg_len);
 
 			/* is_target_animal_detected() picks the primary format (MP4 if
@@ -375,8 +377,8 @@ void app_run(void)
 		case VIDEO_CAPTURE:
 			//ajouter à l'avenir un contrôle // de mouvement avec le pipe0
 
-			setup_record_h264(rec_files_height);
-			record_h264_to_ram(rec_files_height, VIDEO_DURATION_S);
+			setup_record_h264(REC_FILE_HEIGHT);
+			record_h264_to_ram(REC_FILE_HEIGHT, VIDEO_DURATION_S);
 
 			sd_reinit_for_storage = true;
 			state = SD_CARD_INIT;
@@ -396,7 +398,7 @@ void app_run(void)
 			}
 
 			snprintf(path, sizeof(path), "%s/_config-sys_data-det.json", timestamp);
-			if(record_detection_json_to_sd(path, timestamp, &detect_result, &config_py, rec_files_height,
+			if(record_detection_json_to_sd(path, timestamp, &detect_result, &config_py, REC_FILE_HEIGHT,
 			                                detect_exposure, detect_gain) != 0)
 				printf("[REC] json save FAILED\r\n");
 
