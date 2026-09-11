@@ -389,6 +389,9 @@ static void main_thread_fct(void *arg)
 
   CN11_Inputs_Config();
 
+  BSP_LED_Init(LED_GREEN);
+  BSP_LED_Init(LED_RED);
+
   /* Set all required IPs as secure privileged */
   Security_Config();
 

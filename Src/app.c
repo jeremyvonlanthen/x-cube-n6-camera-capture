@@ -324,6 +324,8 @@ void app_run(void)
 			break;
 
 		case MOVEMENT_DETECTION:
+			BSP_LED_On(LED_RED);
+
 			if(SD_inserted()){
 				printf("[uSD] uSD has been removed, SD re-init...\r\n");
 				state = SD_CARD_INIT;
@@ -331,6 +333,9 @@ void app_run(void)
 			}
 
 			if(DETECT_ProcessFrame(&detect_result)){
+				BSP_LED_On(LED_GREEN);
+				BSP_LED_Off(LED_RED);
+
 				CMW_CAMERA_GetExposure(&detect_exposure);
 				CMW_CAMERA_GetGain(&detect_gain);
 				char pct1_buf[16], pct2_buf[16];
@@ -341,6 +346,7 @@ void app_run(void)
 				state = RECORD_MODE_INIT;
 				break;
 			}
+			BSP_LED_Off(LED_RED);
 
 			sleep_short_period(1000);
 			state = OP_WINDOW_CHECK;
@@ -394,6 +400,7 @@ void app_run(void)
 			                                detect_exposure, detect_gain) != 0)
 				printf("[REC] json save FAILED\r\n");
 
+			BSP_LED_Off(LED_GREEN);
 			SD_PowerDown();
 			state = DETECT_MODE_WARMUP;
 			break;

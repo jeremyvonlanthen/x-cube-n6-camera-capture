@@ -23,6 +23,7 @@
 #include "cmw_camera.h"
 #include "stm32n6xx_hal.h"
 #include "stm32n6xx_hal_dcmipp.h"
+#include "stm32n6570_discovery.h"
 #include "stm32n6xx_ll_venc.h"
 #include "FreeRTOS.h"
 #include "task.h"
@@ -322,6 +323,7 @@ int record_h264_to_ram(int height, int rec_duration)
     watchdog_kick();
     h264_frame_ready = false;
     frame_count++;
+    BSP_LED_Toggle(LED_GREEN);
 
     /* First frame is always IDR+SPS/PPS. */
     {
