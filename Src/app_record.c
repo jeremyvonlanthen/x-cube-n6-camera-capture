@@ -28,16 +28,6 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
-/* H264 recording configuration (module-private).
- * The video resolution (4:3) is passed to setup_record_h264()/
- * record_h264_to_ram() as their 'height' argument; the width is
- * derived (height * 4 / 3).  It must stay
- * <= H264_MAX_HEIGHT: the VENC/EWL encoder pools (app_enc.c) and
- * buffer_full_frame (2 capture frames + ring) are sized for that maximum. */
-/* 15 fps @ 720p (not the H264_MAX_HEIGHT of 1080p): a 1440x1080/25fps clip
- * measured ~15.7 Mbit/s on hardware, which didn't fit an 8-second clip in
- * PSRAM (see H264_RAM_STORE_SIZE below). 960x720/15fps measures ~4.15 Mbit/s,
- * comfortably fitting a full 15-second clip with margin to spare. */
 #define H264_FPS              20
 #define H264_VENC_OUT_SIZE    (1024 * 1024)  /* 1 MB: holds a full 1080p keyframe */
 #define H264_AE_WARMUP_FRAMES 10
@@ -73,25 +63,11 @@ static size_t h264_encode_frame(uint8_t *p_frame, int is_intra_force)
   return res;
 }
 
-/* Takes one snapshot (camera is still in the post-warmup configuration) and
- * encodes it to JPEG (hardware) into hires_jpeg_buffer -- no SD access here;
- * record_snapshot_flush_to_sd() writes it out once the card is mounted.
- * Called in RECORD_MODE_INIT.
- *   height : 4:3 photo height (width derived); up to SENSOR_HEIGHT (full res).
- * Returns the encoded length (> 0), or <= 0 on capture/encode failure. */
 int record_snapshot_to_ram(int height)
 {
-  int width = height * 4 / 3;      /* 4:3, full-scene downscale from sensor */
+  int width = ((height * 4 / 3) + 15) & ~15;
   int jpeg_len;
   uint32_t start;
-
-  /* MONO snapshot while the camera runs in detect (mono, cropped/downsized)
-   * mode: reconfigure PIPE1 ONLY to a full-scene width x height MONO
-   * downscale (ROI = full sensor).  The sensor is untouched, so the
-   * AE/exposure converged during the detect warmup stay valid -> no delay.
-   * No restore needed: DETECT_MODE_WARMUP re-applies the detect setup once
-   * the record cycle is done (setup_record_h264() reconfigures pipe1 again
-   * first if this turns out to be a video). */
   CAM_Pipe1_SetFormat(SENSOR_WIDTH, SENSOR_HEIGHT,
                       width, height, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1);
 
@@ -112,14 +88,6 @@ int record_snapshot_to_ram(int height)
   }
   snapshot_in_progress = false;
 
-  /* Let the CSI/D-PHY link settle after this PIPE1 snapshot before the
-   * caller potentially tears the camera down (VIDEO_CAPTURE -> setup_record_h264()
-   * -> CAM_Deinit()+CAM_Init() right after this call, with no other delay in
-   * between). camera_warmup() always inserts this same 50 ms settle after
-   * its own PIPE1 stop; without it here, a video recording that follows a
-   * detection cycle (the 2nd+ one in a session) can hit a DCMIPP D-PHY
-   * relock error that leaves hcamera_dcmipp.State != READY, failing the
-   * "ret == HAL_OK" assert in DCMIPP_PipeInitCapture (app_cam.c). */
   vTaskDelay(pdMS_TO_TICKS(50));
 
   SCB_InvalidateDCache_by_Addr((uint32_t *)buffer_full_frame, CACHE_ALIGN_SIZE(MAX_CAPTURE_FRAME_SIZE));
@@ -153,33 +121,18 @@ int record_snapshot_flush_to_sd(const char *fname)
   return REC_SaveFile(hires_jpeg_buffer, (size_t)snapshot_jpeg_len, fname);
 }
 
-/* Prepares the camera for H264 recording: reconfigures to (height*4/3) x height
- * RGB565 (full-scene downscale), (re)inits the VENC + H264 encoder once, starts
- * the double-buffered capture and lets the AE settle.  Called in
- * VIDEO_CAPTURE, right before record_h264_to_ram(); leaves the
- * double-buffered capture running for it.
- *   height : 4:3 video height, must be <= H264_MAX_HEIGHT (width is derived). */
 void setup_record_h264(int height)
 {
-  /* LL_VENC_Init and ENC_Init must each be called exactly once —
-   * ENC_DeInit crashes on this target.  Init once on first entry,
-   * reuse on every subsequent call (same pattern as the USB phase). */
   static bool hw_initialized = false;
 
-  int width = height * 4 / 3;                                 /* 4:3 */
+
+  int width = ((height * 4 / 3) + 7) & ~7;
   uint32_t frame_bytes = (uint32_t)width * (uint32_t)height * 2u; /* RGB565 */
   CAM_conf_t cam_conf = { 0 };
   ENC_Conf_t enc_conf;
 
   assert(height <= H264_MAX_HEIGHT);  /* encoder pools sized for this max */
 
-  /* Switch camera to width x height RGB565 @ H264_FPS for H264 (full-scene
-   * downscale from the sensor).
-   * RGB565 (2 B/px) halves PSRAM bandwidth vs ARGB8888: fixes DCMIPP
-   * pixel-packer overruns (right-side line artifacts).  Encoder preproc
-   * is set to H264ENC_RGB565 accordingly (app_enc.c). */
-  /* Reuse the exposure/gain converged before the reconfig as a seed, so the
-   * AE warmup below starts near-correct instead of from a dark default. */
   int32_t seed_exp = 0, seed_gain = 0;
   CMW_CAMERA_GetExposure(&seed_exp);
   CMW_CAMERA_GetGain(&seed_gain);
@@ -301,7 +254,10 @@ static int h264_ram_width, h264_ram_height;
  * Returns the number of frames captured (> 0), or -1 if none were. */
 int record_h264_to_ram(int height, int rec_duration)
 {
-  int width = height * 4 / 3; /* 4:3 */
+  /* Must match setup_record_h264()'s own rounding (multiple of 8 for
+   * RGB565) -- this is a separate call computing the same width from the
+   * same height, not a shared variable. */
+  int width = ((height * 4 / 3) + 7) & ~7;
   uint32_t start_tick, last_frame_tick, frame_count = 0, encode_ok_count = 0;
 
   h264_ram_frame_count = 0;
@@ -524,7 +480,9 @@ int record_detection_json_to_sd(const char *fname, const char *det_timestamp,
                                  int rec_height, int32_t exposure_us, int32_t gain_mdb)
 {
   static char buf[8192];
-  int rec_width = rec_height * 4 / 3; /* 4:3, see record_snapshot_to_ram/setup_record_h264 */
+  /* Must match setup_record_h264()'s rounding, or this report would claim a
+   * width the camera was never actually configured with. */
+  int rec_width = ((rec_height * 4 / 3) + 7) & ~7;
   double gain_db = (double)gain_mdb / 1000.0;
   int iso_approx = (int)(100.0 * pow(10.0, gain_db / 20.0)); /* same formula as camera_config_gui.py */
   int n = 0;
