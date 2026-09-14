@@ -144,11 +144,6 @@ void axisram_reset(void)
  * Public API (building blocks for the state machine)
  * ========================================================================== */
 
-/* TODO: replace with the real animal-classification algorithm (NPU model?).
- * Runs on the still image just captured by record_snapshot_to_ram() (in
- * buffer_full_frame / hires_jpeg_buffer). For now always answers "yes" so
- * the video path is what gets exercised end-to-end until a real classifier
- * is wired in here. */
 static bool is_target_animal_detected(void)
 {
   return true; /* TODO */
@@ -164,6 +159,29 @@ static const char *pct_str(float pct, char *buf, size_t bufsz)
   else
     snprintf(buf, bufsz, "%.2f%%", (double)pct);
   return buf;
+}
+
+void check_boot_state()
+{
+	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
+		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
+		mode = _24H;
+		state = SD_CARD_INIT;
+	}
+	else if(HAL_GPIO_ReadPin(GPIOH, GPIO_PIN_5) == GPIO_PIN_RESET){
+		printf("[FSM] RUNS NOW IN DIURNAL MODE (until system restart)\r\n");
+		mode = _DIURNAL;
+		state = SD_CARD_INIT;
+	}
+
+	if(mode != _CONFIG){
+		if(!check_rtc_validity()){
+			printf("[RTC] calendar invalid in an autonomous mode "
+					"(dead/missing backup battery, or first power-up) -- raised error\r\n");
+			state = FSM_ERROR;
+		}
+	}
+	else printf("[FSM] RUNS NOW IN CONFIG MODE (until system restart)\r\n");
 }
 
 /* ==========================================================================
@@ -187,18 +205,9 @@ void app_run(void)
 	bool config_already_saved = false;
 	DETECT_Result_t detect_result = {0};
 	int32_t detect_exposure = 0, detect_gain = 0;
+	uint8_t consecutive_sd_init = 0;
 
-	if(HAL_GPIO_ReadPin(GPIOD, GPIO_PIN_0) == GPIO_PIN_RESET){
-		printf("[FSM] RUNS NOW IN 24H MODE (until system restart)\r\n");
-		mode = _24H;
-		state = SD_CARD_INIT;
-	}
-	else if(HAL_GPIO_ReadPin(GPIOH, GPIO_PIN_5) == GPIO_PIN_RESET){
-		printf("[FSM] RUNS NOW IN DIURNAL MODE (until system restart)\r\n");
-		mode = _DIURNAL;
-		state = SD_CARD_INIT;
-	}
-	else printf("[FSM] RUNS NOW IN CONFIG MODE (until system restart)\r\n");
+	check_boot_state();
 
 	while(1)
 	{
@@ -266,13 +275,19 @@ void app_run(void)
 			if (CONFIG_FLASH_Save(&config_py) == 0)
 				printf("[FSM] pipes config saved to flash\n"
 							 "[FSM] now ready to execute diurnal or 24h mode\r\n");
-			else printf("[FSM] pipes config flash save FAILED\r\n");
+			else{
+				printf("[FSM] pipes config flash save FAILED -- raised error\r\n");
+				state = FSM_ERROR;
+				break;
+			}
 
 			config_already_saved = true;
 			break;
 
 		case SD_CARD_INIT:
-			if(SD_init(sd_reinit_for_storage)){
+			if(SD_init(sd_reinit_for_storage, consecutive_sd_init)){
+				consecutive_sd_init = 0;
+
 				if(sd_reinit_for_storage){
 					sd_reinit_for_storage = false;
 					state = MULTIMEDIA_STORAGE;
@@ -283,6 +298,14 @@ void app_run(void)
 				}
 				break;
 			}
+
+			if((++consecutive_sd_init > MAX_CONSECUTIVE_SD_INIT_FAIL) || sd_reinit_for_storage){
+				printf("[FSM] re-init uSD is no more possible (>%d times or re-init for storage failed)"
+						" -- raised error\r\n", MAX_CONSECUTIVE_SD_INIT_FAIL);
+				state = FSM_ERROR;
+				break;
+			}
+
 			sleep_short_period(2000);
 			break;
 
@@ -292,7 +315,11 @@ void app_run(void)
 
 			if(config_py.magic != CONFIG_MAGIC){
 				if (CONFIG_FLASH_Load(&config_py) == 0) printf("[FSM] pipes config loaded from flash\r\n");
-				else printf("[FSM] pipes config flash load FAILED (config_py memory empty)\r\n");
+				else{
+					printf("[FSM] pipes config flash load FAILED (config_py memory empty) -- raised error\r\n");
+					state = FSM_ERROR;
+					break;
+				}
 			}
 
 			printf("[FSM] pipes configuration procedure\r\n");
@@ -405,6 +432,14 @@ void app_run(void)
 			BSP_LED_Off(LED_GREEN);
 			SD_PowerDown();
 			state = DETECT_MODE_WARMUP;
+			break;
+
+		case FSM_ERROR:
+			BSP_LED_Off(LED_GREEN);
+			BSP_LED_On(LED_RED);
+
+			printf("[FSM] error raised: looping in FSM_ERROR state\r\n");
+			sleep_short_period(5000);
 			break;
 
 		default:

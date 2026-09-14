@@ -22,7 +22,7 @@
  *   quiet : true for a storage re-init (SD was just powered back up to
  *           flush a captured video/photo) -- collapses the mount/free-space
  *           detail into a single "re-init" line instead of repeating it. */
-int SD_init(bool quiet);
+int SD_init(bool re_init, uint8_t consecutive_sd_init);
 
 int SD_inserted(void);
 

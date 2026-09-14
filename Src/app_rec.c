@@ -428,20 +428,23 @@ static void rec_task_fct(void *arg)
 /* ------------------------------------------------------------------------ */
 /* Public API                                                                */
 /* ------------------------------------------------------------------------ */
-int SD_init(bool quiet)
+int SD_init(bool re_init, uint8_t consecutive_sd_init)
 {
-  int rec_ready = REC_Init(quiet);
+  int rec_ready = REC_Init(re_init);
 
   switch (rec_ready) {
   case 0:
-    if (quiet)
+    if(re_init)
       printf("[uSD] uSD successfully re-init\r\n");
     break;
   case -1:
     printf("[uSD] required formatting failed (FAT32)\r\n");
     break;
   case -2:
-    printf("[uSD] no uSD card detected/mounted (retry in 2 sec)\r\n");
+  	if(!re_init)
+  		printf("[uSD] no uSD card detected/mounted (%d. times -- retry in 2 sec)\r\n", consecutive_sd_init);
+  	else
+  		printf("[uSD] corrupted uSD, re-init not possible  -- raised error\r\n");
     break;
   case -3:
     printf("[uSD] SDMMC2 clock config failed\r\n");

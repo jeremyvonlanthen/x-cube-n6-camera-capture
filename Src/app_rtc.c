@@ -84,10 +84,14 @@ void rtc_init(void)
   if (BSP_I2C1_ReadReg(DS3231_I2C_ADDR, DS3231_REG_STATUS, &status, 1) == BSP_ERROR_NONE
       && !(status & DS3231_STATUS_OSF)) {
     rtc_time_valid = true;
-  } else {
-    printf("[RTC] oscillator stop flag set: calendar was lost (dead/missing "
-           "backup battery, or first power-up) -- waiting for 'T' from the GUI\r\n");
   }
+
+  printf("[RTC] ready: %s/ time valid: %s\r\n", rtc_ready ? "true":"false", rtc_time_valid ? "true":"false");
+}
+
+bool check_rtc_validity(void)
+{
+  return rtc_time_valid;
 }
 
 void rtc_set_datetime(const uint8_t dt[6])

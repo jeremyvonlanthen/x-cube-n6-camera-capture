@@ -18,6 +18,7 @@
 #define SENSOR_HEIGHT         1944
 #define SENSOR_WARMUP_FPS     5
 #define WARMUP_FRAMES_TARGET  10      /* frames skipped so the AE/ISP converge */
+#define MAX_CONSECUTIVE_SD_INIT_FAIL 30
 
 #define REC_FILE_HEIGHT				920     /* 480, 720, 960, 1080 (max) */
 
@@ -83,7 +84,8 @@ typedef enum
   MOVEMENT_DETECTION,
   RECORD_MODE_INIT,
   VIDEO_CAPTURE,
-  MULTIMEDIA_STORAGE
+  MULTIMEDIA_STORAGE,
+  FSM_ERROR
 } state_t;
 
 typedef enum

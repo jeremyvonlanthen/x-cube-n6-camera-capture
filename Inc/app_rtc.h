@@ -11,6 +11,7 @@
 #ifndef APP_RTC_H
 #define APP_RTC_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -27,5 +28,10 @@ void rtc_set_datetime(const uint8_t dt[6]);
 /* Writes a file-name-safe timestamp "AAAA-MM-JJ_HH-MM-SS" into buf (>= 20 B).
  * Falls back to a tick-based name if the RTC is not ready. */
 void rtc_make_timestamp(char *buf, size_t n);
+
+/* True once the calendar is known-valid (OSF was clear at rtc_init(), or
+ * rtc_set_datetime() has since been called). False means the calendar was
+ * lost (dead/missing backup battery, or first power-up). */
+bool check_rtc_validity(void);
 
 #endif /* APP_RTC_H */
