@@ -47,13 +47,7 @@ from PyQt6.QtGui import QFont, QIntValidator, QPixmap, QPen, QBrush, QColor, QIm
 MAGIC          = 0x12345678
 UART_BAUDRATE  = 10_000_000
 ST_VID         = 0x0483      # VID USB STMicroelectronics (ST-Link VCP)
-POLL_MS        = 1500        # période de polling des ports série
-
-# Délai (s) de silence après "dev. board detected" au-delà duquel on
-# considère que l'USB a été branché avant l'allumage du système (aucune
-# ligne du µC n'a suivi la détection -- s'il tournait déjà, une ligne serait
-# arrivée quasi immédiatement).
-USB_SILENCE_TIMEOUT_S = 3.5
+POLL_MS        = 50          # période de polling des ports série
 
 USB_WARNING_TEXT = (
     "Le câble USB semble avoir été branché avant l'allumage du système.\n\n"
@@ -63,6 +57,15 @@ USB_WARNING_TEXT = (
     "        1. Retirez le câble USB,\n"
     "        2. Allumez le système,\n"
     "        3. Branchez l'USB (seulement si besoin).\n"
+)
+
+USB_ORDER_UNKNOWN_TEXT = (
+    "Impossible de déterminer l'ordre d'exécution USB / allumage :\n"
+    "Ce GUI a été lancé après ces deux évènements (le port existait déjà et "
+    "le µC était déjà en cours d'exécution).\n\n"
+    "Pour déployer ce système de manière autonome sur "
+    "batterie, vérifiez vous-même que l'USB était bien branché "
+    "avant l'allumage."
 )
 BG             = "#f4f6fa"   # fond clair
 FG             = "#2a3442"
@@ -532,10 +535,9 @@ class SerialWorker(QThread):
         # Demande au µC de réannoncer son état "prêt pour capture" ('R'),
         # au cas où il y soit entré avant que ce port ne soit ouvert (ex.
         # système déjà démarré en mode config, silencieux tant qu'aucune
-        # commande n'arrive -- sans ça, ni "Capturer" ni la détection
-        # d'ordre de branchement (MainWindow._check_usb_boot_order) ne
-        # verraient jamais de signe de vie). Inoffensif dans les autres
-        # états (mode diurne/24h) : l'octet est simplement ignoré.
+        # commande n'arrive -- sans ça, "Capturer" ne serait jamais réactivé).
+        # Inoffensif dans les autres états (mode diurne/24h) : l'octet est
+        # simplement ignoré.
         #
         # Renvoyé périodiquement (pas juste une fois) tant qu'on n'a pas vu
         # "(capturer une image)" : le port s'ouvre dès l'énumération USB,
@@ -954,11 +956,19 @@ class MainWindow(QMainWindow):
         self._worker     = None    # SerialWorker (unique propriétaire du port)
         self._auto_port  = None    # port de la carte ST détectée
 
-        # Détection de l'ordre de branchement USB / allumage (voir
-        # _check_usb_boot_order / _show_usb_warning_popup) : si aucune ligne
-        # du µC ne suit "dev. board detected" dans le délai imparti, l'USB
-        # était déjà branché avant l'allumage du système.
-        self._line_seen_since_connect = False
+        # Détection de l'ordre de branchement USB / allumage (voir _log_stm /
+        # _show_usb_warning_popup) : uniquement basée sur la toute première
+        # ligne reçue après "dev. board detected" (pas de timeout) :
+        #   - si c'est "[MAIN] system started" (le tout premier printf du µC,
+        #     voir main.c) : USB avant l'allumage -> warning.
+        #   - sinon :
+        #       - port déjà là au tout premier poll du GUI (_usb_is_bound) :
+        #         GUI lancé en dernier, ordre non observable -> info.
+        #       - sinon : port apparu pendant que le GUI tournait déjà, donc
+        #         l'allumage a été vu en direct avant l'USB -> pas de warning.
+        self._first_poll_done    = False  # 1er appel à _poll_ports() pas encore passé (session GUI entière)
+        self._usb_is_bound       = False  # port déjà présent au tout premier poll (cette connexion)
+        self._first_line_pending = False  # 1re ligne de cette connexion pas encore vue
         self._usb_popup = None   # QMessageBox actuellement affichée, ou None
 
         self._ready    = False   # µC prêt (message "wait for send yuv frame")
@@ -1172,33 +1182,27 @@ class MainWindow(QMainWindow):
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
 
-        # Une ligne est arrivée : si _check_usb_boot_order() n'a pas encore
-        # tranché (voir plus bas), ceci lui apprendra que le µC a réagi --
-        # donc qu'il tournait déjà avant le branchement USB.
-        self._line_seen_since_connect = True
+        # Toute première ligne reçue depuis cette connexion : tranche l'ordre
+        # de branchement USB/allumage (voir le commentaire dans __init__).
+        if self._first_line_pending:
+            self._first_line_pending = False
+            if "system started" in text:
+                # 1re ligne = tout premier printf du µC : le port était déjà
+                # ouvert avant qu'il ne démarre -> USB avant l'allumage.
+                self._show_usb_warning_popup()
+            elif self._usb_is_bound:
+                # Port déjà là au tout premier poll du GUI, et pourtant on
+                # n'a pas capté le tout premier printf du µC : les deux
+                # évènements (USB, allumage) ont eu lieu avant le lancement
+                # du GUI -- ordre non observable.
+                self._show_usb_order_unknown_popup()
+            # sinon : port apparu alors que le GUI tournait déjà -> l'USB est
+            # arrivé après un allumage déjà en cours, vu en direct -> rien à
+            # signaler.
 
         # Le µC signale qu'il attend une capture -> (ré)active "Capturer"
         if "(capturer une image)" in text:
             self._on_ready()
-        if "RESTART OF THE CONFIG PROCEDURE" in text:
-            self._on_config_warmup()
-
-        # Mode config confirmé : l'avertissement (pensé pour le mode
-        # diurne/24h autonome, où débrancher casse tout) ne s'applique pas
-        # à une session de config au bureau -- l'USB y reste branché tout
-        # du long de toute façon.
-        if "RUNS NOW IN CONFIG MODE" in text:
-            self._close_usb_warning_popup()
-
-    def _check_usb_boot_order(self):
-        """Appelé USB_SILENCE_TIMEOUT_S après "dev. board detected". Si
-        aucune ligne du µC n'est arrivée depuis, il n'a réagi à rien -- donc
-        il n'était pas encore démarré au moment du branchement USB (l'USB
-        était déjà là avant l'allumage)."""
-        if self._auto_port is None:
-            return  # déconnecté entre-temps, plus pertinent
-        if not self._line_seen_since_connect:
-            self._show_usb_warning_popup()
 
     def _show_usb_warning_popup(self):
         if self._usb_popup is not None and self._usb_popup.isVisible():
@@ -1212,6 +1216,21 @@ class MainWindow(QMainWindow):
         # affichée via show() plutôt que exec() : ne bloque pas la boucle
         # d'évènements, donc la lecture série et la fermeture automatique
         # sur "RUNS NOW IN CONFIG MODE" continuent de fonctionner.
+        box.setWindowModality(Qt.WindowModality.ApplicationModal)
+        box.show()
+        self._usb_popup = box
+
+    def _show_usb_order_unknown_popup(self):
+        """GUI lancé en dernier (voir _usb_is_bound) : ni avertissement ni
+        silence trompeur -- on informe explicitement que l'ordre n'a pas pu
+        être déterminé, plutôt que de deviner ou de ne rien dire."""
+        if self._usb_popup is not None and self._usb_popup.isVisible():
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setWindowTitle("Ordre de branchement indéterminé")
+        box.setText(USB_ORDER_UNKNOWN_TEXT)
+        box.setStandardButtons(QMessageBox.StandardButton.Ok)
         box.setWindowModality(Qt.WindowModality.ApplicationModal)
         box.show()
         self._usb_popup = box
@@ -1328,10 +1347,11 @@ class MainWindow(QMainWindow):
                 self._reset_display()
                 self._update_buttons()
                 # Réinitialise la détection d'ordre de branchement pour cette
-                # nouvelle connexion, et programme la vérification à
-                # USB_SILENCE_TIMEOUT_S (voir _log_stm/_check_usb_boot_order).
-                self._line_seen_since_connect = False
-                QTimer.singleShot(int(USB_SILENCE_TIMEOUT_S * 1000), self._check_usb_boot_order)
+                # nouvelle connexion (voir _log_stm). _usb_is_bound : port
+                # déjà présent dès le tout premier poll de toute la session
+                # GUI -> GUI lancé en dernier (voir __init__).
+                self._usb_is_bound       = not self._first_poll_done
+                self._first_line_pending = True
                 self._start_worker()
         else:
             if self._auto_port is not None:
@@ -1343,6 +1363,8 @@ class MainWindow(QMainWindow):
             self.port_info.setText("Searching for dev. board… (VID 0x0483)")
             self.port_info.setStyleSheet("color: #96702a; font-size: 10px;")
             self._update_buttons()
+
+        self._first_poll_done = True
 
     # ── Info decimation pipe 2 ────────────────────────────────────────────────
 

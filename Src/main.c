@@ -370,6 +370,9 @@ static void main_thread_fct(void *arg)
 
   CONSOLE_Config();
 
+  HAL_Delay(500);
+  printf("[MAIN] system started\r\n");
+
   Fuse_Programming();
 
   /*** External RAM and NOR Flash *********************************************/
