@@ -24,10 +24,18 @@
 #include "stm32n6xx.h"
 #include "stm32n6xx_hal.h"
 #include "utils.h"
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
 /* CAM_Init() retry budget: see the comment above its DCMIPP_PipeInitCapture()
  * retry loop. */
 #define CAM_INIT_MAX_ATTEMPTS 5
+
+/* ISP update task: see CAM_IspUpdate_SignalFromISR()/isp_update_task_fct()
+ * below for why CAM_IspUpdate() must not run directly from the VSYNC IRQ. */
+#define ISP_UPDATE_TASK_STACK_SIZE (configMINIMAL_STACK_SIZE * 2)
+#define ISP_UPDATE_TASK_PRIORITY   (tskIDLE_PRIORITY + 2)
 
 /* Define sensor orientation. DIAS is a stationary wildlife camera, not a
  * selfie application: IMX335 (the sensor actually mounted, see README) is
@@ -211,11 +219,61 @@ void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height,
     printf("[CAM] pipe1 format reconfigure failed\r\n");
 }
 
+/* ISP_BackgroundProcess() (called through CMW_CAMERA_Run() -> the sensor
+ * driver's Run()) writes exposure/gain to the sensor over I2C -- a blocking
+ * transaction. Running it straight from the DCMIPP VSYNC IRQ used to freeze
+ * the whole system intermittently: main.c's boot sequence sets every
+ * peripheral IRQ (DCMIPP included) to the exact same priority as SysTick, so
+ * a same-priority IRQ cannot be preempted by it; any I2C wait inside the ISR
+ * then stalls SysTick, freezing HAL_GetTick() and, with it, every
+ * timeout-based wait in the system (observed as camera_warmup() hanging
+ * silently forever, with no diagnostic ever printing). Deferring the actual
+ * work to this task keeps the blocking I2C call at task level, where a
+ * same-priority IRQ conflict can no longer stall the tick. */
+static StaticSemaphore_t isp_update_sem_storage;
+static SemaphoreHandle_t isp_update_sem;
+static StaticTask_t isp_update_task_tcb;
+static StackType_t isp_update_task_stack[ISP_UPDATE_TASK_STACK_SIZE];
+static bool isp_update_task_started = false;
+
+static void isp_update_task_fct(void *arg)
+{
+  (void)arg;
+  for (;;) {
+    xSemaphoreTake(isp_update_sem, portMAX_DELAY);
+    CAM_IspUpdate();
+  }
+}
+
+static void isp_update_task_ensure_started(void)
+{
+  if (isp_update_task_started)
+    return;
+
+  isp_update_sem = xSemaphoreCreateBinaryStatic(&isp_update_sem_storage);
+  xTaskCreateStatic(isp_update_task_fct, "isp_upd", ISP_UPDATE_TASK_STACK_SIZE, NULL,
+                    ISP_UPDATE_TASK_PRIORITY, isp_update_task_stack, &isp_update_task_tcb);
+  isp_update_task_started = true;
+}
+
+void CAM_IspUpdate_SignalFromISR(void)
+{
+  BaseType_t higher_priority_task_woken = pdFALSE;
+
+  if (isp_update_sem == NULL)
+    return;
+
+  xSemaphoreGiveFromISR(isp_update_sem, &higher_priority_task_woken);
+  portYIELD_FROM_ISR(higher_priority_task_woken);
+}
+
 void CAM_Init(CAM_conf_t *conf, uint8_t two_pipes)
 {
   CMW_CameraInit_t cam_conf;
   int ret;
   int attempt;
+
+  isp_update_task_ensure_started();
 
   if (!is_sensor_valid) {
     is_sensor_valid = true;

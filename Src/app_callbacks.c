@@ -41,7 +41,7 @@ int CMW_CAMERA_PIPE_FrameEventCallback(uint32_t pipe)
 int CMW_CAMERA_PIPE_VsyncEventCallback(uint32_t pipe)
 {
   if (pipe == DCMIPP_PIPE1)
-    CAM_IspUpdate();
+    CAM_IspUpdate_SignalFromISR();
   return HAL_OK;
 }
 

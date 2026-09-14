@@ -231,7 +231,7 @@ void app_run(void)
 			case 'S':
 				int jpeg_len = capture_img();
 				printf("[FSM] frame captured: %d KB\r\n", jpeg_len / 1024);
-				HAL_Delay(50);
+				//HAL_Delay(50);
 				send_img_uart(hires_jpeg_buffer, jpeg_len);
 				break;
 

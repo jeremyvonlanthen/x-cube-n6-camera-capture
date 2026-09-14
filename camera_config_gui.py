@@ -536,10 +536,25 @@ class SerialWorker(QThread):
         # d'ordre de branchement (MainWindow._check_usb_boot_order) ne
         # verraient jamais de signe de vie). Inoffensif dans les autres
         # états (mode diurne/24h) : l'octet est simplement ignoré.
-        try:
-            ser.write(b'R'); ser.flush()
-        except Exception:
-            pass
+        #
+        # Renvoyé périodiquement (pas juste une fois) tant qu'on n'a pas vu
+        # "(capturer une image)" : le port s'ouvre dès l'énumération USB,
+        # souvent avant que le µC ait fini son propre boot (RTC, warmup
+        # caméra...) et n'atteigne l'état où il lit l'UART -- un envoi
+        # unique arrivant avant ça est silencieusement perdu (rien ne lit
+        # l'UART pendant le warmup), et sans retry le GUI restait bloqué
+        # indéfiniment en attente d'une réponse qui ne viendrait jamais.
+        R_RETRY_PERIOD_S = 2.0
+        mcu_ready = False
+
+        def _send_r():
+            try:
+                ser.write(b'R'); ser.flush()
+            except Exception:
+                pass
+
+        _send_r()
+        last_r_attempt = time.time()
 
         line         = bytearray()   # ligne printf en cours de reconstruction
         awaiting_ack = False         # attente de l'ack config
@@ -549,6 +564,13 @@ class SerialWorker(QThread):
                                       # (reste d'un chunk après un 0xAA non sollicité)
 
         while self._running:
+            # 0) 'R' pas encore acquitté : on retente périodiquement (voir le
+            # commentaire plus haut -- le premier envoi peut arriver avant que
+            # le µC n'écoute l'UART).
+            if not mcu_ready and time.time() - last_r_attempt > R_RETRY_PERIOD_S:
+                _send_r()
+                last_r_attempt = time.time()
+
             # 1) Commande en attente ?
             try:
                 cmd, arg = self._cmd_q.get_nowait()
@@ -615,6 +637,8 @@ class SerialWorker(QThread):
                     line = bytearray()
                     if text:
                         self.line_received.emit(text)
+                        if "(capturer une image)" in text:
+                            mcu_ready = True     # 'R' acquitté : plus besoin de retenter
                 elif byte != 0x0D:               # ignore \r
                     line.append(byte)
 
