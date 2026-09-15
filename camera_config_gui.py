@@ -641,6 +641,10 @@ class SerialWorker(QThread):
                         self.line_received.emit(text)
                         if "(capturer une image)" in text:
                             mcu_ready = True     # 'R' acquitté : plus besoin de retenter
+                        elif "system started" in text:
+                            mcu_ready = False
+                            _send_r()
+                            last_r_attempt = time.time()
                 elif byte != 0x0D:               # ignore \r
                     line.append(byte)
 
@@ -674,15 +678,6 @@ class SerialWorker(QThread):
             buf.extend(ser.read(remaining))
         return bytes(buf), leftover
 
-    # ── Lit taille + JPEG après un sync 0xAA déjà consommé, décode et émet
-    # image_received. Utilisé à la fois par la capture 'S' à la demande et
-    # par un snapshot non sollicité (mouvement détecté côté µC).
-    # `leftover` : octets du chunk courant déjà lus après le 0xAA (peut être
-    # vide). Retourne les octets en trop non consommés (normalement vide),
-    # à réinjecter dans la boucle principale au lieu d'être perdus.
-    # `unsolicited` : True pour un snapshot poussé par RECORD_MODE_INIT (émet
-    # movement_snapshot_received, pas image_received -- l'éditeur de crop de
-    # la config ne doit pas être perturbé par une image reçue sans demande).
     def _read_and_emit_snapshot(self, ser, leftover, unsolicited=False):
         old_timeout = ser.timeout
         signal = self.movement_snapshot_received if unsolicited else self.image_received
@@ -1181,24 +1176,13 @@ class MainWindow(QMainWindow):
         self.logbox.append(f"<span style='color:#2f7a2f'>STM &raquo;</span> {text}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
+        if "system started" in text:
+            self._show_usb_warning_popup()
+            self._on_config_warmup()
+        elif self._first_line_pending and self._usb_is_bound:
+            self._show_usb_order_unknown_popup()
 
-        # Toute première ligne reçue depuis cette connexion : tranche l'ordre
-        # de branchement USB/allumage (voir le commentaire dans __init__).
-        if self._first_line_pending:
-            self._first_line_pending = False
-            if "system started" in text:
-                # 1re ligne = tout premier printf du µC : le port était déjà
-                # ouvert avant qu'il ne démarre -> USB avant l'allumage.
-                self._show_usb_warning_popup()
-            elif self._usb_is_bound:
-                # Port déjà là au tout premier poll du GUI, et pourtant on
-                # n'a pas capté le tout premier printf du µC : les deux
-                # évènements (USB, allumage) ont eu lieu avant le lancement
-                # du GUI -- ordre non observable.
-                self._show_usb_order_unknown_popup()
-            # sinon : port apparu alors que le GUI tournait déjà -> l'USB est
-            # arrivé après un allumage déjà en cours, vu en direct -> rien à
-            # signaler.
+        self._first_line_pending = False
 
         # Le µC signale qu'il attend une capture -> (ré)active "Capturer"
         if "(capturer une image)" in text:
@@ -1212,10 +1196,6 @@ class MainWindow(QMainWindow):
         box.setWindowTitle("USB branché avant l'allumage")
         box.setText(USB_WARNING_TEXT)
         box.setStandardButtons(QMessageBox.StandardButton.Ok)
-        # Modale (bloque l'interaction avec la fenêtre principale) mais
-        # affichée via show() plutôt que exec() : ne bloque pas la boucle
-        # d'évènements, donc la lecture série et la fermeture automatique
-        # sur "RUNS NOW IN CONFIG MODE" continuent de fonctionner.
         box.setWindowModality(Qt.WindowModality.ApplicationModal)
         box.show()
         self._usb_popup = box
