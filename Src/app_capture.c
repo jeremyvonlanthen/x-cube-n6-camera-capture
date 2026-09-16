@@ -45,14 +45,6 @@ void camera_warmup(uint8_t warmup_frames_target, uint8_t warmup_fps, bool two_pi
   cam_conf.is_rgb_swap          = 0;
   CAM_Init(&cam_conf, (uint8_t)two_pipes);
 
-  /* Seed the freshly-reset AE (CAM_Init resets exposure/gain to defaults) --
-   * gives AE a head start, but the full convergence wait below still runs
-   * unconditionally: AE keeps drifting for a while after a re-seed (it runs
-   * continuously, in the background, not just during this wait), and
-   * skipping straight to DETECT_CalibrateStats() risked freezing the
-   * background model before AE had actually settled on the detect crop --
-   * observed in the field as unreliable detection (real movement missed or
-   * masked) from the second detect cycle onward. */
   if (seed_exp  > 0) CMW_CAMERA_SetExposure(seed_exp);
   if (seed_gain > 0) CMW_CAMERA_SetGain(seed_gain);
 

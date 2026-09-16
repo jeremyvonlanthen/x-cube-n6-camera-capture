@@ -217,7 +217,6 @@ void app_run(void)
 		case CONFIG_MODE_WARMUP:
 			printf("[FSM] config-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS, false);
-
 			state = SEND_IMG_FRAME;
 			break;
 
@@ -308,10 +307,8 @@ void app_run(void)
 			break;
 
 		case DETECT_MODE_WARMUP:
-			printf("%d start warmup\r\n", (int)HAL_GetTick());
 			printf("[FSM] detection-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
 			camera_warmup(WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS, true);
-			printf("%d end warmup\r\n", (int)HAL_GetTick());
 
 			if(config_py.magic != CONFIG_MAGIC){
 				if (CONFIG_FLASH_Load(&config_py) == 0) printf("[FSM] pipes config loaded from flash\r\n");
@@ -367,10 +364,12 @@ void app_run(void)
 
 				CMW_CAMERA_GetExposure(&detect_exposure);
 				CMW_CAMERA_GetGain(&detect_gain);
+
 				char pct1_buf[16], pct2_buf[16];
 				printf("[FSM] movement detected! (background: %s, foreground: %s)\r\n",
 				       pct_str(detect_result.second_plan.deviation_voisinage.pct_pipe, pct1_buf, sizeof(pct1_buf)),
 				       pct_str(detect_result.premier_plan.deviation_voisinage.pct_pipe, pct2_buf, sizeof(pct2_buf)));
+
 				movement_tick = HAL_GetTick();
 				state = RECORD_MODE_INIT;
 				break;
