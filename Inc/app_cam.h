@@ -37,6 +37,10 @@ void CAM_IspUpdate(void);
  * its implementation in app_cam.c for why. */
 void CAM_IspUpdate_SignalFromISR(void);
 void CAM_Deinit(void);
+/* Sensor standby/wakeup pair for a short low-power window (no AE/ISP
+ * warmup needed on wakeup) -- see app_cam.c. */
+void CAM_SensorStandby(void);
+void CAM_SensorWakeup(void);
 /* Reconfigure pipe1 alone (full-frame, given format) without touching the
  * sensor — no AE warmup needed.  See app_cam.c. */
 void CAM_Pipe1_SetFormat(int sensor_width, int sensor_height,

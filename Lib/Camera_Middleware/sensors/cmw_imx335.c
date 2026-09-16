@@ -256,6 +256,32 @@ static int32_t CMW_IMX335_Start(void *io_ctx)
   return IMX335_Start(&((CMW_IMX335_t *)io_ctx)->ctx_driver);
 }
 
+/* Stops sensor streaming (standby) only -- ISP/AE state is left untouched so
+ * CMW_IMX335_Resume() can bring streaming back up without a warmup. Mirrors
+ * the other CMW_*_Stop() sensor wrappers in this middleware, none of which
+ * touch the ISP either. */
+static int32_t CMW_IMX335_Stop(void *io_ctx)
+{
+  if (IMX335_Stop(&((CMW_IMX335_t *)io_ctx)->ctx_driver) != IMX335_OK)
+  {
+    return CMW_ERROR_PERIPH_FAILURE;
+  }
+  return CMW_ERROR_NONE;
+}
+
+/* Resumes streaming after CMW_IMX335_Stop() -- unlike CMW_IMX335_Start(),
+ * does NOT call ISP_Init()/ISP_Start() (which would reset AE/AWB
+ * convergence and re-run the statistic area setup), since the ISP session
+ * opened by the last Start() is still alive. */
+static int32_t CMW_IMX335_Resume(void *io_ctx)
+{
+  if (IMX335_Start(&((CMW_IMX335_t *)io_ctx)->ctx_driver) != IMX335_OK)
+  {
+    return CMW_ERROR_PERIPH_FAILURE;
+  }
+  return CMW_ERROR_NONE;
+}
+
 static int32_t CMW_IMX335_Run(void *io_ctx)
 {
 #ifndef ISP_MW_TUNING_TOOL_SUPPORT
@@ -359,6 +385,8 @@ int CMW_IMX335_Probe(CMW_IMX335_t *io_ctx, CMW_Sensor_if_t *imx335_if)
   memset(imx335_if, 0, sizeof(*imx335_if));
   imx335_if->Init = CMW_IMX335_Init;
   imx335_if->Start = CMW_IMX335_Start;
+  imx335_if->Stop = CMW_IMX335_Stop;
+  imx335_if->Resume = CMW_IMX335_Resume;
   imx335_if->DeInit = CMW_IMX335_DeInit;
   imx335_if->Run = CMW_IMX335_Run;
   imx335_if->VsyncEventCallback = CMW_IMX335_VsyncEventCallback;

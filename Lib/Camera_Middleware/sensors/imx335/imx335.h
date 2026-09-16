@@ -128,6 +128,7 @@ typedef struct
 int32_t IMX335_RegisterBusIO(IMX335_Object_t *pObj, IMX335_IO_t *pIO);
 int32_t IMX335_Init(IMX335_Object_t *pObj, uint32_t Resolution, uint32_t PixelFormat);
 int32_t IMX335_Start(IMX335_Object_t *pObj);
+int32_t IMX335_Stop(IMX335_Object_t *pObj);
 int32_t IMX335_DeInit(IMX335_Object_t *pObj);
 int32_t IMX335_ReadID(IMX335_Object_t *pObj, uint32_t *Id);
 int32_t IMX335_GetCapabilities(IMX335_Object_t *pObj, IMX335_Capabilities_t *Capabilities);

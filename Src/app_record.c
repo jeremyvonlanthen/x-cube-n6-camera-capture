@@ -268,7 +268,7 @@ int record_h264_to_ram(int height, int rec_duration)
   start_tick = HAL_GetTick();
   last_frame_tick = start_tick;
 
-  printf("[REC] video started %d ms after movement detection\r\n", (int)(start_tick - actual_ticks));
+  printf("[REC] video started %d ms after movement detection\r\n", (int)(start_tick - movement_tick));
   printf("[REC] capturing %d sec to RAM... (@ %d fps @ %dp @ QF = %d)\r\n", rec_duration, H264_FPS, height, VIDEO_COMPRESSION_FACTOR);
 
   while (HAL_GetTick() - start_tick < (uint32_t)(rec_duration * 1000)) {

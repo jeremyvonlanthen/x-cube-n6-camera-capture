@@ -346,6 +346,28 @@ void CAM_Deinit()
   assert(ret == CMW_ERROR_NONE);
 }
 
+/* Puts the sensor in standby (MIPI CSI-2 stream fully stopped) for the
+ * duration of a short low-power window -- e.g. the FSM's sleep_short_period()
+ * wait in MOVEMENT_DETECTION, which otherwise leaves the sensor streaming
+ * (and drawing its full running current) throughout the CPU sleep. Pair with
+ * CAM_SensorWakeup() before the next capture. */
+void CAM_SensorStandby(void)
+{
+  int ret;
+
+  ret = CMW_CAMERA_SensorStandby();
+  assert(ret == CMW_ERROR_NONE);
+}
+
+/* Resumes streaming after CAM_SensorStandby() -- no AE/ISP warmup needed. */
+void CAM_SensorWakeup(void)
+{
+  int ret;
+
+  ret = CMW_CAMERA_SensorResume();
+  assert(ret == CMW_ERROR_NONE);
+}
+
 /* DCMIPP pipe error counter (overrun = corrupted line endings on the right
  * side of the image).  Displayed in the [REC] periodic report (app.c). */
 volatile uint32_t dcmipp_err_count = 0;

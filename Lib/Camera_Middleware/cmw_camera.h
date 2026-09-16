@@ -203,6 +203,13 @@ int32_t CMW_CAMERA_Start(uint32_t pipe, uint8_t *pbuff, uint32_t Mode);
 int32_t CMW_CAMERA_DoubleBufferStart(uint32_t pipe, uint8_t *pbuff1, uint8_t *pbuff2, uint32_t Mode);
 int32_t CMW_CAMERA_Suspend(uint32_t pipe);
 int32_t CMW_CAMERA_Resume(uint32_t pipe);
+/* Sensor-level standby/resume (not to be confused with CMW_CAMERA_Suspend()/
+ * CMW_CAMERA_Resume() above, which only act on the DCMIPP pipe state): stops
+ * and restarts the physical sensor's streaming, for a low-power window
+ * shorter than a full CMW_CAMERA_DeInit()/CMW_CAMERA_Init() cycle. See
+ * cmw_camera.c. */
+int32_t CMW_CAMERA_SensorStandby(void);
+int32_t CMW_CAMERA_SensorResume(void);
 int32_t CMW_CAMERA_EnableRestartState(ISP_RestartStateTypeDef *ISP_RestartState);
 int32_t CMW_CAMERA_DisableRestartState();
 

@@ -88,7 +88,7 @@ volatile bool frame_ready = false;
 volatile int  warmup_frames = 0;
 volatile bool warmup_done = false;
 volatile bool uart_busy = false; //true = UART used for binary data, printf muted
-uint32_t actual_ticks;
+uint32_t movement_tick;
 
 /* H264 recording state (shared with app_record.c / app_callbacks.c) */
 volatile bool h264_streaming = false;
@@ -370,13 +370,17 @@ void app_run(void)
 				printf("[FSM] movement detected! (background: %s, foreground: %s)\r\n",
 				       pct_str(detect_result.second_plan.deviation_voisinage.pct_pipe, pct1_buf, sizeof(pct1_buf)),
 				       pct_str(detect_result.premier_plan.deviation_voisinage.pct_pipe, pct2_buf, sizeof(pct2_buf)));
-				actual_ticks = HAL_GetTick();
+				movement_tick = HAL_GetTick();
 				state = RECORD_MODE_INIT;
 				break;
 			}
 			BSP_LED_Off(LED_RED);
 
+			/* Sensor otherwise keeps streaming (full running current) through
+			 * the whole CPU sleep window -- see CAM_SensorStandby(). */
+			CAM_SensorStandby();
 			sleep_short_period(1000);
+			CAM_SensorWakeup();
 			state = OP_WINDOW_CHECK;
 			break;
 

@@ -46,6 +46,11 @@ typedef struct
   void    (*VsyncEventCallback)(void *, uint32_t);
   void    (*FrameEventCallback)(void *, uint32_t);
   int32_t (*Stop)(void *);
+  /* Optional: resumes streaming after Stop() without redoing Start()'s
+   * ISP_Init()/ISP_Start() (which resets AE/AWB convergence) -- for a sensor
+   * that implements it, a short Stop()/Resume() cycle is much cheaper than
+   * Stop()/Start(). Leave NULL if unsupported: callers fall back to Start(). */
+  int32_t (*Resume)(void *);
   int32_t (*ReadID)(void *, uint32_t *);
   int32_t (*SetBrightness)(void *, int32_t);
   int32_t (*SetSaturation)(void *, int32_t);

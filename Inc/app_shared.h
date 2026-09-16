@@ -121,7 +121,7 @@ extern volatile bool h264_streaming;
 extern volatile bool h264_frame_ready;
 extern volatile bool force_intra;
 extern uint8_t * volatile h264_ready_buf;
-extern uint32_t actual_ticks;
+extern uint32_t movement_tick;
 
 /* --- Allocateur AXISRAM (defini dans app.c) --- */
 void *axisram_alloc(uint32_t size);

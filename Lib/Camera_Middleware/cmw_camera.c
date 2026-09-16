@@ -644,6 +644,47 @@ int32_t CMW_CAMERA_Resume(uint32_t pipe)
 }
 
 /**
+  * @brief  Puts the physical sensor in standby, stopping its MIPI CSI-2
+  *         stream entirely (unlike CMW_CAMERA_Suspend(), which only pauses
+  *         the DCMIPP pipe on the MCU side -- the sensor itself keeps
+  *         streaming and drawing its full running current). Meant for a
+  *         short low-power window between captures; CMW_CAMERA_SensorResume()
+  *         restarts streaming without redoing ISP init/AE warmup.
+  * @retval CMW status
+  */
+int32_t CMW_CAMERA_SensorStandby(void)
+{
+  if (!is_camera_started || Camera_Drv.Stop == NULL)
+  {
+    return CMW_ERROR_NONE;
+  }
+
+  return Camera_Drv.Stop(&camera_bsp);
+}
+
+/**
+  * @brief  Resumes sensor streaming after CMW_CAMERA_SensorStandby(). Falls
+  *         back to the (heavier) Camera_Drv.Start() -- which re-runs ISP
+  *         init and AE warmup -- for a sensor driver that doesn't implement
+  *         the lightweight Resume() op.
+  * @retval CMW status
+  */
+int32_t CMW_CAMERA_SensorResume(void)
+{
+  if (!is_camera_started)
+  {
+    return CMW_ERROR_NONE;
+  }
+
+  if (Camera_Drv.Resume != NULL)
+  {
+    return Camera_Drv.Resume(&camera_bsp);
+  }
+
+  return Camera_Drv.Start(&camera_bsp);
+}
+
+/**
   * @brief  Enable the Restart State. When enabled, at system restart, the ISP middleware configuration
   *         is restored from the last update before the restart.
   * @param  ISP_RestartState pointer to ISP Restart State. To use this mode in a Low Power use case, where

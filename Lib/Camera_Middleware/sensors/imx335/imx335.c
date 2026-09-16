@@ -491,6 +491,27 @@ int32_t IMX335_Start(IMX335_Object_t *pObj)
 }
 
 /**
+  * @brief  Stops the sensor streaming (standby) without tearing down its
+  *         register configuration -- unlike DeInit, a subsequent Start()
+  *         resumes streaming immediately with no AE/ISP warmup needed.
+  * @param  pObj  pointer to component object
+  * @retval Component status
+  */
+int32_t IMX335_Stop(IMX335_Object_t *pObj)
+{
+  uint8_t tmp;
+  int32_t ret;
+
+  tmp = IMX335_MODE_STANDBY;
+  ret = imx335_write_reg(&pObj->Ctx, IMX335_REG_MODE_SELECT, &tmp, 1);
+  if (ret != IMX335_OK)
+  {
+    return IMX335_ERROR;
+  }
+  return ret;
+}
+
+/**
   * @brief  De-initializes the camera sensor.
   * @param  pObj  pointer to component object
   * @retval Component status
