@@ -154,10 +154,9 @@ static bool is_target_animal_detected(void)
  * equivalent). */
 static const char *pct_str(float pct, char *buf, size_t bufsz)
 {
-  if (isnan(pct))
-    snprintf(buf, bufsz, "N/A");
-  else
-    snprintf(buf, bufsz, "%.2f%%", (double)pct);
+  if (isnan(pct)) snprintf(buf, bufsz, "N/A");
+  else snprintf(buf, bufsz, "%.2f%%", (double)pct);
+
   return buf;
 }
 
@@ -217,7 +216,7 @@ void app_run(void)
 		{
 		case CONFIG_MODE_WARMUP:
 			printf("[FSM] config-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1, 0);
+			camera_warmup(WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS, false);
 
 			state = SEND_IMG_FRAME;
 			break;
@@ -309,8 +308,10 @@ void app_run(void)
 			break;
 
 		case DETECT_MODE_WARMUP:
+			printf("%d start warmup\r\n", (int)HAL_GetTick());
 			printf("[FSM] detection-mode warmup... (%d frames @ %d fps)\r\n", WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS);
-			camera_warmup(SENSOR_WIDTH, SENSOR_HEIGHT, DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1, 1);
+			camera_warmup(WARMUP_FRAMES_TARGET, SENSOR_WARMUP_FPS, true);
+			printf("%d end warmup\r\n", (int)HAL_GetTick());
 
 			if(config_py.magic != CONFIG_MAGIC){
 				if (CONFIG_FLASH_Load(&config_py) == 0) printf("[FSM] pipes config loaded from flash\r\n");
@@ -376,11 +377,10 @@ void app_run(void)
 			}
 			BSP_LED_Off(LED_RED);
 
-			/* Sensor otherwise keeps streaming (full running current) through
-			 * the whole CPU sleep window -- see CAM_SensorStandby(). */
 			CAM_SensorStandby();
 			sleep_short_period(1000);
 			CAM_SensorWakeup();
+
 			state = OP_WINDOW_CHECK;
 			break;
 
@@ -396,8 +396,7 @@ void app_run(void)
 			is_video_to_record = animal_detected || RECORD_JPEG_AND_MP4;
 			is_img_to_save = !animal_detected || RECORD_JPEG_AND_MP4;
 
-			if(is_video_to_record)
-				state = VIDEO_CAPTURE;
+			if(is_video_to_record) state = VIDEO_CAPTURE;
 			else{
 				sd_reinit_for_storage = true;
 				state = SD_CARD_INIT;

@@ -22,34 +22,46 @@
 
 /* (Re)initializes the camera at the requested capture resolution (full-scene
  * downscale from the sensor) and DCMIPP output format, then lets the AE/ISP
- * converge for WARMUP_FRAMES_TARGET frames before stopping the pipe(s).
+ * converge for warmup_frames_target frames before stopping the pipe(s).
  *   cap_w/cap_h : pipe output size (SENSOR_WIDTH x SENSOR_HEIGHT for both the
  *                 config preview and detect warmup). */
-void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format, uint8_t two_pipes)
+void camera_warmup(uint8_t warmup_frames_target, uint8_t warmup_fps, bool two_pipes)
 {
 	static bool camera_initialized = false;
+	int32_t seed_exp = 0, seed_gain = 0;
 
   CAM_conf_t cam_conf = { 0 };
 
-  if(camera_initialized) CAM_Deinit();
+  if(camera_initialized) {
+    CMW_CAMERA_GetExposure(&seed_exp);
+    CMW_CAMERA_GetGain(&seed_gain);
+    CAM_Deinit();
+  }
 
-  cam_conf.capture_width        = cap_w;
-  cam_conf.capture_height       = cap_h;
-  cam_conf.fps                  = SENSOR_WARMUP_FPS;
-  cam_conf.dcmipp_output_format = output_format;
+  cam_conf.capture_width        = SENSOR_WIDTH;
+  cam_conf.capture_height       = SENSOR_HEIGHT;
+  cam_conf.fps                  = warmup_fps;
+  cam_conf.dcmipp_output_format = DCMIPP_PIXEL_PACKER_FORMAT_MONO_Y8_G8_1;
   cam_conf.is_rgb_swap          = 0;
-  CAM_Init(&cam_conf, two_pipes);
+  CAM_Init(&cam_conf, (uint8_t)two_pipes);
 
-  /* Required on re-warmup: the frame event callback only increments
-   * warmup_frames while warmup_done is false.  Without this reset, the
-   * second warmup (DETECT_MODE_WARMUP) waits forever since warmup_done is
-   * still true from the previous mode. */
+  /* Seed the freshly-reset AE (CAM_Init resets exposure/gain to defaults) --
+   * gives AE a head start, but the full convergence wait below still runs
+   * unconditionally: AE keeps drifting for a while after a re-seed (it runs
+   * continuously, in the background, not just during this wait), and
+   * skipping straight to DETECT_CalibrateStats() risked freezing the
+   * background model before AE had actually settled on the detect crop --
+   * observed in the field as unreliable detection (real movement missed or
+   * masked) from the second detect cycle onward. */
+  if (seed_exp  > 0) CMW_CAMERA_SetExposure(seed_exp);
+  if (seed_gain > 0) CMW_CAMERA_SetGain(seed_gain);
+
   warmup_done = false;
   warmup_frames = 0;
 
   CAM_CapturePipe_Start(buffer_full_frame, buffer_warmup, CMW_MODE_CONTINUOUS, 0);
 
-  while (warmup_frames < WARMUP_FRAMES_TARGET)
+  while (warmup_frames < warmup_frames_target)
     vTaskDelay(pdMS_TO_TICKS(10));
 
   HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE1, DCMIPP_VIRTUAL_CHANNEL0);
@@ -65,7 +77,7 @@ void camera_warmup(uint32_t cap_w, uint32_t cap_h, uint32_t output_format, uint8
   }
   snapshot_in_progress = false;
 
-  if (two_pipes) {
+  if(two_pipes){
     HAL_DCMIPP_CSI_PIPE_Stop(&hcamera_dcmipp, DCMIPP_PIPE2, DCMIPP_VIRTUAL_CHANNEL0);
     vTaskDelay(pdMS_TO_TICKS(50));
   }

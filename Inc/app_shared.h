@@ -16,8 +16,8 @@
 /* --- Constantes partagees --- */
 #define SENSOR_WIDTH          2592
 #define SENSOR_HEIGHT         1944
-#define SENSOR_WARMUP_FPS     5
-#define WARMUP_FRAMES_TARGET  10      /* frames skipped so the AE/ISP converge */
+#define SENSOR_WARMUP_FPS     10			/* FRAMES/FPS >= 1 */
+#define WARMUP_FRAMES_TARGET  10     /* frames skipped so the AE/ISP converge */
 #define MAX_CONSECUTIVE_SD_INIT_FAIL 30
 
 #define REC_FILE_HEIGHT				920     /* 480, 720, 960, 1080 (max) */

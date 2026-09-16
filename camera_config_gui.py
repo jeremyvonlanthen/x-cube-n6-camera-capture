@@ -1176,7 +1176,7 @@ class MainWindow(QMainWindow):
         self.logbox.append(f"<span style='color:#2f7a2f'>STM &raquo;</span> {text}")
         sb = self.logbox.verticalScrollBar()
         sb.setValue(sb.maximum())
-        if "system started" in text:
+        if "[MAIN]" in text:
             self._show_usb_warning_popup()
             self._on_config_warmup()
         elif self._first_line_pending and self._usb_is_bound:
